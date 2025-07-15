@@ -476,18 +476,11 @@ class SimpleBuildAnalyzer:
             empty_repos = 0
             excluded_repos = 0
             
-            # First, count total repositories to set up progress bar
-            # We need to iterate twice: once to count, once to process
-            # This is necessary because GitHub API doesn't provide total count upfront
-            console.print("[dim]Counting repositories...[/dim]")
-            temp_repos = list(self.org.get_repos())
-            total_count = len(temp_repos)
+            # Use pagination to handle large organizations efficiently
+            # GitHub API returns 30 repos per page by default, but we can request up to 100
+            page = 1
+            per_page = 100  # Maximum allowed by GitHub API
             
-            if total_count == 0:
-                console.print("[yellow]No repositories found in the organization[/yellow]")
-                return []
-            
-            # Now process repositories with progress tracking
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -496,46 +489,62 @@ class SimpleBuildAnalyzer:
                 console=console
             ) as progress:
                 task = progress.add_task(
-                    f"Processing {total_count} repositories...", 
-                    total=total_count
+                    f"Fetching repositories (page {page})...", 
+                    total=None  # We don't know total yet
                 )
                 
-                for repo in temp_repos:
-                    total_repos += 1
+                while True:
+                    # Fetch repositories with pagination
+                    self._make_api_call(f"Get organization repositories page {page}")
+                    page_repos = list(self.org.get_repos().get_page(page - 1))  # GitHub uses 0-based indexing
                     
-                    # Skip archived and empty repos - they're unlikely to have build configurations
-                    # This reduces noise and focuses analysis on active projects
-                    if repo.archived:
-                        archived_repos += 1
+                    if not page_repos:
+                        break  # No more repositories
+                    
+                    # Process repositories in this page
+                    for repo in page_repos:
+                        total_repos += 1
+                        
+                        # Skip archived and empty repos - they're unlikely to have build configurations
+                        # This reduces noise and focuses analysis on active projects
+                        if repo.archived:
+                            archived_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping archived repository: {repo.name}")
+                            continue
+                        
+                        if repo.size == 0:
+                            empty_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping empty repository: {repo.name}")
+                            continue
+                        
+                        # Check if repository should be excluded
+                        if self._should_exclude_repository(repo.name):
+                            excluded_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping excluded repository: {repo.name}")
+                            continue
+                        
+                        repos.append(repo)
                         if self.verbose:
-                            logging.debug(f"Skipping archived repository: {repo.name}")
-                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos})")
-                        progress.advance(task)
-                        continue
+                            logging.debug(f"Added repository for analysis: {repo.name} (size: {repo.size} bytes)")
                     
-                    if repo.size == 0:
-                        empty_repos += 1
-                        if self.verbose:
-                            logging.debug(f"Skipping empty repository: {repo.name}")
-                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos + excluded_repos})")
-                        progress.advance(task)
-                        continue
+                    # Update progress
+                    progress.update(task, description=f"Fetched {total_repos} repositories (found: {len(repos)}, skipped: {archived_repos + empty_repos + excluded_repos})")
                     
-                    # Check if repository should be excluded
-                    if self._should_exclude_repository(repo.name):
-                        excluded_repos += 1
-                        if self.verbose:
-                            logging.debug(f"Skipping excluded repository: {repo.name}")
-                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos + excluded_repos})")
-                        progress.advance(task)
-                        continue
+                    # If we got fewer repos than requested, we've reached the end
+                    if len(page_repos) < per_page:
+                        break
                     
-                    repos.append(repo)
-                    if self.verbose:
-                        logging.debug(f"Added repository for analysis: {repo.name} (size: {repo.size} bytes)")
+                    page += 1
                     
-                    progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (found: {len(repos)})")
-                    progress.advance(task)
+                    # Add a small delay between pages to be respectful
+                    time.sleep(0.1)
+            
+            if total_repos == 0:
+                console.print("[yellow]No repositories found in the organization[/yellow]")
+                return []
             
             if self.verbose:
                 logging.info(f"Repository filtering summary:")
@@ -545,7 +554,7 @@ class SimpleBuildAnalyzer:
                 logging.info(f"  - Excluded repositories (skipped): {excluded_repos}")
                 logging.info(f"  - Repositories for analysis: {len(repos)}")
             
-            console.print(f"[green]Found {len(repos)} repositories for analysis[/green]")
+            console.print(f"[green]Found {len(repos)} repositories for analysis (from {total_repos} total)[/green]")
             
             # Save to cache for future use
             self._save_to_cache(repos, 'all_repos')
@@ -1484,6 +1493,195 @@ class SimpleBuildAnalyzer:
         except Exception as e:
             console.print(f"[red]Error saving HTML report: {str(e)}[/red]")
 
+    def _get_repository_metadata_bulk(self, repo_names: List[str]) -> Dict[str, dict]:
+        """
+        Get metadata for multiple repositories in bulk to reduce API calls
+        
+        This method fetches basic metadata (archived status, size, etc.) for multiple
+        repositories in a single API call using the search API, which is more efficient
+        than individual repository calls.
+        
+        Args:
+            repo_names: List of repository names to get metadata for
+            
+        Returns:
+            Dictionary mapping repo names to their metadata
+        """
+        if not repo_names:
+            return {}
+        
+        metadata = {}
+        
+        # Use search API to get repository metadata in bulk
+        # This is more efficient than individual calls
+        for i in range(0, len(repo_names), 100):  # Process in batches of 100
+            batch = repo_names[i:i+100]
+            search_query = f"org:{self.org_name} {' '.join([f'repo:{self.org_name}/{name}' for name in batch])}"
+            
+            try:
+                self._make_api_call(f"Get metadata for {len(batch)} repositories")
+                search_results = self.github.search_repositories(query=search_query)
+                
+                for repo in search_results:
+                    metadata[repo.name] = {
+                        'archived': repo.archived,
+                        'size': repo.size,
+                        'repository': repo
+                    }
+                    
+            except Exception as e:
+                if self.verbose:
+                    logging.warning(f"Failed to get metadata for batch {i//100 + 1}: {str(e)}")
+                # Fall back to individual calls for this batch
+                for repo_name in batch:
+                    try:
+                        repo = self.org.get_repo(repo_name)
+                        metadata[repo_name] = {
+                            'archived': repo.archived,
+                            'size': repo.size,
+                            'repository': repo
+                        }
+                    except Exception as e2:
+                        if self.verbose:
+                            logging.warning(f"Failed to get metadata for {repo_name}: {str(e2)}")
+        
+        return metadata
+
+    def get_repositories_optimized(self) -> List[Repository]:
+        """
+        Get all repositories with optimized API usage for large organizations
+        
+        This method uses bulk metadata fetching and pagination to minimize
+        API calls for large organizations.
+        
+        Returns:
+            List of GitHub Repository objects to analyze
+        """
+        # Try to load from cache first
+        cached_repos = self._load_from_cache('all_repos')
+        if cached_repos:
+            return cached_repos
+        
+        console.print(f"[bold blue]Fetching all repositories from {self.org_name} (optimized mode)...[/bold blue]")
+        repos = []
+        
+        try:
+            self._make_api_call("Get organization repositories")
+            
+            if self.verbose:
+                logging.info(f"Fetching all repositories from organization: {self.org_name}")
+            
+            total_repos = 0
+            archived_repos = 0
+            empty_repos = 0
+            excluded_repos = 0
+            
+            # Use pagination to handle large organizations efficiently
+            page = 1
+            per_page = 100  # Maximum allowed by GitHub API
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task(
+                    f"Fetching repositories (page {page})...", 
+                    total=None  # We don't know total yet
+                )
+                
+                while True:
+                    # Fetch repositories with pagination
+                    self._make_api_call(f"Get organization repositories page {page}")
+                    page_repos = list(self.org.get_repos().get_page(page - 1))  # GitHub uses 0-based indexing
+                    
+                    if not page_repos:
+                        break  # No more repositories
+                    
+                    # Get repository names for this page
+                    repo_names = [repo.name for repo in page_repos]
+                    
+                    # Get metadata in bulk for this page
+                    metadata = self._get_repository_metadata_bulk(repo_names)
+                    
+                    # Process repositories in this page
+                    for repo in page_repos:
+                        total_repos += 1
+                        
+                        # Use metadata if available, otherwise fall back to repo object
+                        if repo.name in metadata:
+                            repo_meta = metadata[repo.name]
+                            is_archived = repo_meta['archived']
+                            repo_size = repo_meta['size']
+                            repo_obj = repo_meta['repository']
+                        else:
+                            is_archived = repo.archived
+                            repo_size = repo.size
+                            repo_obj = repo
+                        
+                        # Skip archived and empty repos
+                        if is_archived:
+                            archived_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping archived repository: {repo.name}")
+                            continue
+                        
+                        if repo_size == 0:
+                            empty_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping empty repository: {repo.name}")
+                            continue
+                        
+                        # Check if repository should be excluded
+                        if self._should_exclude_repository(repo.name):
+                            excluded_repos += 1
+                            if self.verbose:
+                                logging.debug(f"Skipping excluded repository: {repo.name}")
+                            continue
+                        
+                        repos.append(repo_obj)
+                        if self.verbose:
+                            logging.debug(f"Added repository for analysis: {repo.name} (size: {repo_size} bytes)")
+                    
+                    # Update progress
+                    progress.update(task, description=f"Fetched {total_repos} repositories (found: {len(repos)}, skipped: {archived_repos + empty_repos + excluded_repos})")
+                    
+                    # If we got fewer repos than requested, we've reached the end
+                    if len(page_repos) < per_page:
+                        break
+                    
+                    page += 1
+                    
+                    # Add a small delay between pages to be respectful
+                    time.sleep(0.1)
+            
+            if total_repos == 0:
+                console.print("[yellow]No repositories found in the organization[/yellow]")
+                return []
+            
+            if self.verbose:
+                logging.info(f"Repository filtering summary:")
+                logging.info(f"  - Total repositories: {total_repos}")
+                logging.info(f"  - Archived repositories (skipped): {archived_repos}")
+                logging.info(f"  - Empty repositories (skipped): {empty_repos}")
+                logging.info(f"  - Excluded repositories (skipped): {excluded_repos}")
+                logging.info(f"  - Repositories for analysis: {len(repos)}")
+            
+            console.print(f"[green]Found {len(repos)} repositories for analysis (from {total_repos} total)[/green]")
+            
+            # Save to cache for future use
+            self._save_to_cache(repos, 'all_repos')
+            
+        except Exception as e:
+            console.print(f"[red]Error fetching repositories: {str(e)}[/red]")
+            if self.verbose:
+                logging.error(f"Error fetching repositories: {str(e)}")
+            return []
+        
+        return repos
+
 @click.command()
 @click.option('--org', help='GitHub organization name (can also be set in config file)')
 @click.option('--repo', help='Specific repository name to analyze (e.g., "my-repo"). If not specified, analyzes all repositories in the organization.')
@@ -1492,6 +1690,7 @@ class SimpleBuildAnalyzer:
 @click.option('--csv', help='Output file for CSV report')
 @click.option('--html', help='Output file for HTML report')
 @click.option('--jenkins-only', is_flag=True, help='Only analyze repositories with Jenkinsfiles (much faster)')
+@click.option('--optimized', is_flag=True, help='Use optimized mode for large organizations (reduces API calls)')
 @click.option('--rate-limit-delay', default=0.05, help='Delay between API calls in seconds (default: 0.05)')
 @click.option('--max-workers', default=8, help='Maximum number of parallel workers (default: 8)')
 @click.option('--verbose', is_flag=True, help='Enable verbose logging for detailed API request information')
@@ -1500,7 +1699,7 @@ class SimpleBuildAnalyzer:
 @click.option('--clear-cache', is_flag=True, help='Clear all cache files before running analysis')
 @click.option('--config', '-c', help='Path to configuration file (default: config.yaml)')
 @click.option('--create-config', is_flag=True, help='Create a default configuration file and exit')
-def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenkins_only: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
+def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenkins_only: bool, optimized: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
     """
     Analyze GitHub organization or specific repository for build tool versions, Java versions, and plugin versions
     
@@ -1562,6 +1761,7 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
         csv = csv or config_obj.output.csv_report
         html = html or config_obj.output.html_report
         jenkins_only = jenkins_only or config_obj.analysis.jenkins_only
+        optimized = optimized or config_obj.parallelism.optimized
         rate_limit_delay = rate_limit_delay if rate_limit_delay != 0.05 else config_obj.parallelism.rate_limit_delay
         max_workers = max_workers if max_workers != 8 else config_obj.parallelism.max_workers
         verbose = verbose or config_obj.output.verbose
@@ -1644,8 +1844,12 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
             console.print("[bold green]Using Jenkins-only mode - analyzing only repositories with Jenkinsfiles[/bold green]")
             repos = analyzer.search_repos_with_jenkinsfiles()
         else:
-            console.print("[bold blue]Using full analysis mode - analyzing all repositories[/bold blue]")
-            repos = analyzer.get_repositories()
+            if optimized:
+                console.print("[bold blue]Using optimized analysis mode - analyzing all repositories with reduced API calls[/bold blue]")
+                repos = analyzer.get_repositories_optimized()
+            else:
+                console.print("[bold blue]Using full analysis mode - analyzing all repositories[/bold blue]")
+                repos = analyzer.get_repositories()
         
         if not repos:
             console.print("[yellow]No repositories found to analyze[/yellow]")

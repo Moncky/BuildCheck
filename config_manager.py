@@ -21,6 +21,7 @@ class ParallelismConfig:
     """Configuration for parallel processing settings"""
     max_workers: int = 8
     rate_limit_delay: float = 0.05
+    optimized: bool = False
 
 
 @dataclass
@@ -148,7 +149,8 @@ class ConfigManager:
         parallelism_data = config_data.get('parallelism', {})
         parallelism = ParallelismConfig(
             max_workers=parallelism_data.get('max_workers', 8),
-            rate_limit_delay=parallelism_data.get('rate_limit_delay', 0.05)
+            rate_limit_delay=parallelism_data.get('rate_limit_delay', 0.05),
+            optimized=parallelism_data.get('optimized', False)
         )
         
         # Validate parallelism settings

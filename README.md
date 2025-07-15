@@ -458,6 +458,62 @@ The tool has been optimized for significantly better performance:
 - **Testing Efficiency**: Perfect for iterative development and testing
 - **Cache Management**: Built-in tools to inspect and manage cache files
 
+## Large Organization Optimizations
+
+For organizations with 500+ repositories, use the optimized mode to minimize API calls:
+
+### Optimized Mode Features
+- **Pagination**: Fetches 100 repositories per API call (maximum allowed)
+- **Bulk Metadata**: Uses search API to get repository metadata in batches
+- **Reduced Workers**: Uses fewer parallel workers to avoid overwhelming the API
+- **Batch Processing**: Processes repositories in smaller batches with rate limit checks
+
+### Usage for Large Organizations
+
+```bash
+# Use optimized mode for large organizations
+python build_check.py --org your-org --optimized --use-cache
+
+# Or use the dedicated large organization script
+python optimize_large_orgs.py --org your-org
+
+# With custom settings
+python build_check.py --org your-org --optimized --rate-limit-delay 0.02 --max-workers 4
+```
+
+### Configuration for Large Organizations
+
+Add to your `config.yaml`:
+
+```yaml
+# Performance Settings for Large Organizations
+parallelism:
+  max_workers: 4               # Reduced for large orgs
+  rate_limit_delay: 0.02       # Faster rate limiting
+  optimized: true              # Enable optimized mode
+
+# Caching Configuration
+caching:
+  enabled: true                # Always enable for large orgs
+  directory: ".cache"
+  duration: 3600               # 1 hour cache
+```
+
+### API Call Reduction
+
+For a 760-repository organization:
+- **Standard Mode**: ~800 API calls (1 per repo + overhead)
+- **Optimized Mode**: ~50 API calls (8 pages of 100 repos + bulk metadata)
+- **With Caching**: ~10 API calls (subsequent runs)
+
+### Rate Limit Management
+
+The optimized mode includes:
+- **Pre-flight Checks**: Warns if API calls are low
+- **Batch Processing**: Processes repos in 50-repo batches
+- **Rate Limit Monitoring**: Checks remaining calls after each batch
+- **Automatic Pausing**: Pauses when approaching limits
+
 ## API Rate Limiting
 
 The tool includes comprehensive GitHub API rate limiting management:
@@ -661,3 +717,66 @@ For detailed testing information, see [tests/README.md](tests/README.md).
 ## License
 
 MIT License - see LICENSE file for details 
+
+## Summary of Optimizations
+
+I've implemented several key optimizations to handle your 760-repository organization efficiently:
+
+### **1. Eliminated Double API Calls**
+- **Before**: The code was making 2 API calls to get repositories (one to count, one to process)
+- **After**: Single API call with pagination
+
+### **2. Pagination with Maximum Efficiency**
+- **Before**: Default 30 repos per page
+- **After**: 100 repos per page (GitHub's maximum)
+- **Impact**: Reduces API calls from ~26 to ~8 for 760 repos
+
+### **3. Bulk Metadata Fetching**
+- New `_get_repository_metadata_bulk()` method uses search API
+- Fetches metadata for 100 repos in a single API call
+- Falls back to individual calls if search fails
+
+### **4. Optimized Mode**
+- New `--optimized` flag for large organizations
+- Uses `get_repositories_optimized()` method
+- Reduced workers (4 instead of 8) to avoid overwhelming API
+
+### **5. Dedicated Large Organization Script**
+- `optimize_large_orgs.py` for organizations with 500+ repos
+- Batch processing with rate limit monitoring
+- Automatic pausing when approaching limits
+
+### **6. Enhanced Caching**
+- Cache repository lists for 1 hour
+- Subsequent runs use ~10 API calls instead of 800
+
+### **Usage for Your 760-Repo Organization**
+
+```bash
+# Option 1: Use optimized mode
+python build_check.py --org your-org --optimized --use-cache
+
+# Option 2: Use dedicated script
+python optimize_large_orgs.py --org your-org
+
+# Option 3: Custom settings
+python build_check.py --org your-org --optimized --rate-limit-delay 0.02 --max-workers 4
+```
+
+### **Expected API Call Reduction**
+- **Before**: ~800 API calls (exhausting your limit)
+- **After**: ~50 API calls (8 pages + bulk metadata)
+- **With Caching**: ~10 API calls (subsequent runs)
+
+### **Configuration**
+Add to your `config.yaml`:
+```yaml
+parallelism:
+  max_workers: 4
+  rate_limit_delay: 0.02
+  optimized: true
+caching:
+  enabled: true
+```
+
+These optimizations should allow you to analyze your 760-repository organization without exhausting the API limit, and subsequent runs will be much faster due to caching. 
