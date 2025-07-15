@@ -41,6 +41,8 @@ caching:
 # Output Configuration
 output:
   json_report: null            # Output file for JSON report (e.g., "report.json") or null to skip
+  csv_report: null             # Output file for CSV report (e.g., "report.csv") or null to skip
+  html_report: report.html            # Output file for HTML report (e.g., "report.html") or null to skip
   verbose: false               # Enable verbose logging
 
 # GitHub Token (can also be set via GITHUB_TOKEN environment variable)

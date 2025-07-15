@@ -28,6 +28,7 @@ Key Design Decisions:
 import os
 import re
 import json
+import csv
 import click
 import time
 import logging
@@ -1132,11 +1133,366 @@ class SimpleBuildAnalyzer:
             
             console.print(table)
 
+    def export_csv_report(self, all_build_tools: List[BuildTool], all_java_versions: List[JavaVersion], all_plugin_versions: List[PluginVersion], output_file: str, org_name: str, analysis_mode: str, total_repos: int, api_calls: int, max_workers: int):
+        """
+        Export analysis results to CSV format
+        
+        Args:
+            all_build_tools: List of all BuildTool objects found
+            all_java_versions: List of all JavaVersion objects found
+            all_plugin_versions: List of all PluginVersion objects found
+            output_file: Path to output CSV file
+            org_name: Organization name
+            analysis_mode: Analysis mode used
+            total_repos: Total repositories analyzed
+            api_calls: Total API calls made
+            max_workers: Number of parallel workers used
+        """
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Write header
+                writer.writerow(['Repository', 'Type', 'Name', 'Version', 'Source Compatibility', 'Target Compatibility', 'Config File', 'Detection Method'])
+                
+                # Write build tools
+                for tool in all_build_tools:
+                    writer.writerow([
+                        tool.repository,
+                        'Build Tool',
+                        tool.name,
+                        tool.version,
+                        '',  # No source compatibility for build tools
+                        '',  # No target compatibility for build tools
+                        tool.file_path,
+                        tool.detection_method
+                    ])
+                
+                # Write Java versions
+                for java in all_java_versions:
+                    writer.writerow([
+                        java.repository,
+                        'Java Version',
+                        'Java',
+                        java.version,
+                        java.source_compatibility,
+                        java.target_compatibility,
+                        java.file_path,
+                        java.detection_method
+                    ])
+                
+                # Write plugin versions
+                for plugin in all_plugin_versions:
+                    writer.writerow([
+                        plugin.repository,
+                        'Plugin Version',
+                        plugin.plugin_name,
+                        plugin.version,
+                        '',  # No source compatibility for plugins
+                        '',  # No target compatibility for plugins
+                        plugin.file_path,
+                        plugin.detection_method
+                    ])
+            
+            console.print(f"\n[green]CSV report saved to: {output_file}[/green]")
+            
+        except Exception as e:
+            console.print(f"[red]Error saving CSV report: {str(e)}[/red]")
+
+    def export_html_report(self, all_build_tools: List[BuildTool], all_java_versions: List[JavaVersion], all_plugin_versions: List[PluginVersion], output_file: str, org_name: str, analysis_mode: str, total_repos: int, api_calls: int, max_workers: int):
+        """
+        Export analysis results to HTML format
+        
+        Args:
+            all_build_tools: List of all BuildTool objects found
+            all_java_versions: List of all JavaVersion objects found
+            all_plugin_versions: List of all PluginVersion objects found
+            output_file: Path to output HTML file
+            org_name: Organization name
+            analysis_mode: Analysis mode used
+            total_repos: Total repositories analyzed
+            api_calls: Total API calls made
+            max_workers: Number of parallel workers used
+        """
+        try:
+            # Generate summary data
+            tool_summary = {}
+            for tool in all_build_tools:
+                if tool.name not in tool_summary:
+                    tool_summary[tool.name] = {'versions': set(), 'repos': set()}
+                tool_summary[tool.name]['versions'].add(tool.version)
+                tool_summary[tool.name]['repos'].add(tool.repository)
+            
+            java_summary = {}
+            for java in all_java_versions:
+                if java.version not in java_summary:
+                    java_summary[java.version] = {'repos': set()}
+                java_summary[java.version]['repos'].add(java.repository)
+            
+            plugin_summary = {}
+            for plugin in all_plugin_versions:
+                if plugin.plugin_name not in plugin_summary:
+                    plugin_summary[plugin.plugin_name] = {'versions': set(), 'repos': set()}
+                plugin_summary[plugin.plugin_name]['versions'].add(plugin.version)
+                plugin_summary[plugin.plugin_name]['repos'].add(plugin.repository)
+            
+            # Generate HTML content
+            html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BuildCheck Report - {org_name}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }}
+        h2 {{
+            color: #34495e;
+            margin-top: 30px;
+        }}
+        .summary-stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }}
+        .stat-card {{
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 6px;
+            text-align: center;
+        }}
+        .stat-number {{
+            font-size: 2em;
+            font-weight: bold;
+            color: #3498db;
+        }}
+        .stat-label {{
+            color: #7f8c8d;
+            margin-top: 5px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #3498db;
+            color: white;
+            font-weight: bold;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f8f9fa;
+        }}
+        tr:hover {{
+            background-color: #e3f2fd;
+        }}
+        .version-badge {{
+            background: #27ae60;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }}
+        .repo-name {{
+            font-family: 'Courier New', monospace;
+            background: #f1f2f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }}
+        .analysis-mode {{
+            background: #e8f5e8;
+            border: 1px solid #27ae60;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }}
+        .timestamp {{
+            color: #7f8c8d;
+            font-size: 0.9em;
+            text-align: center;
+            margin-top: 30px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 BuildCheck Analysis Report</h1>
+        <div class="analysis-mode">
+            <strong>Organization:</strong> {org_name}<br>
+            <strong>Analysis Mode:</strong> {analysis_mode}<br>
+            <strong>Generated:</strong> {time.strftime('%Y-%m-%d %H:%M:%S')}
+        </div>
+        
+        <div class="summary-stats">
+            <div class="stat-card">
+                <div class="stat-number">{total_repos}</div>
+                <div class="stat-label">Repositories Analyzed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{len(all_build_tools)}</div>
+                <div class="stat-label">Build Tools Found</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{len(all_java_versions)}</div>
+                <div class="stat-label">Java Versions Found</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{len(all_plugin_versions)}</div>
+                <div class="stat-label">Plugin Versions Found</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{api_calls}</div>
+                <div class="stat-label">API Calls Made</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{max_workers}</div>
+                <div class="stat-label">Parallel Workers</div>
+            </div>
+        </div>"""
+            
+            # Add build tools section
+            if all_build_tools:
+                html_content += f"""
+        <h2>🛠️ Build Tool Versions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Repository</th>
+                    <th>Build Tool</th>
+                    <th>Version</th>
+                    <th>Config File</th>
+                    <th>Detection Method</th>
+                </tr>
+            </thead>
+            <tbody>"""
+                
+                for tool in all_build_tools:
+                    html_content += f"""
+                <tr>
+                    <td><span class="repo-name">{tool.repository}</span></td>
+                    <td><strong>{tool.name.title()}</strong></td>
+                    <td><span class="version-badge">{tool.version}</span></td>
+                    <td><code>{tool.file_path}</code></td>
+                    <td>{tool.detection_method}</td>
+                </tr>"""
+                
+                html_content += """
+            </tbody>
+        </table>"""
+            
+            # Add Java versions section
+            if all_java_versions:
+                html_content += f"""
+        <h2>☕ Java Versions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Repository</th>
+                    <th>Java Version</th>
+                    <th>Source Compatibility</th>
+                    <th>Target Compatibility</th>
+                    <th>Config File</th>
+                    <th>Detection Method</th>
+                </tr>
+            </thead>
+            <tbody>"""
+                
+                for java in all_java_versions:
+                    html_content += f"""
+                <tr>
+                    <td><span class="repo-name">{java.repository}</span></td>
+                    <td><span class="version-badge">{java.version}</span></td>
+                    <td>{java.source_compatibility or '-'}</td>
+                    <td>{java.target_compatibility or '-'}</td>
+                    <td><code>{java.file_path}</code></td>
+                    <td>{java.detection_method}</td>
+                </tr>"""
+                
+                html_content += """
+            </tbody>
+        </table>"""
+            
+            # Add plugin versions section
+            if all_plugin_versions:
+                html_content += f"""
+        <h2>🔌 Plugin Versions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Repository</th>
+                    <th>Plugin Name</th>
+                    <th>Version</th>
+                    <th>Config File</th>
+                    <th>Detection Method</th>
+                </tr>
+            </thead>
+            <tbody>"""
+                
+                for plugin in all_plugin_versions:
+                    html_content += f"""
+                <tr>
+                    <td><span class="repo-name">{plugin.repository}</span></td>
+                    <td><strong>{plugin.plugin_name}</strong></td>
+                    <td><span class="version-badge">{plugin.version}</span></td>
+                    <td><code>{plugin.file_path}</code></td>
+                    <td>{plugin.detection_method}</td>
+                </tr>"""
+                
+                html_content += """
+            </tbody>
+        </table>"""
+            
+            # Close HTML
+            html_content += f"""
+        <div class="timestamp">
+            Report generated by BuildCheck on {time.strftime('%Y-%m-%d at %H:%M:%S')}
+        </div>
+    </div>
+</body>
+</html>"""
+            
+            # Write HTML file
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            
+            console.print(f"\n[green]HTML report saved to: {output_file}[/green]")
+            
+        except Exception as e:
+            console.print(f"[red]Error saving HTML report: {str(e)}[/red]")
+
 @click.command()
 @click.option('--org', help='GitHub organization name (can also be set in config file)')
 @click.option('--repo', help='Specific repository name to analyze (e.g., "my-repo"). If not specified, analyzes all repositories in the organization.')
 @click.option('--token', envvar='GITHUB_TOKEN', help='GitHub personal access token')
 @click.option('--output', '-o', help='Output file for JSON report')
+@click.option('--csv', help='Output file for CSV report')
+@click.option('--html', help='Output file for HTML report')
 @click.option('--jenkins-only', is_flag=True, help='Only analyze repositories with Jenkinsfiles (much faster)')
 @click.option('--rate-limit-delay', default=0.05, help='Delay between API calls in seconds (default: 0.05)')
 @click.option('--max-workers', default=8, help='Maximum number of parallel workers (default: 8)')
@@ -1146,7 +1502,7 @@ class SimpleBuildAnalyzer:
 @click.option('--clear-cache', is_flag=True, help='Clear all cache files before running analysis')
 @click.option('--config', '-c', help='Path to configuration file (default: config.yaml)')
 @click.option('--create-config', is_flag=True, help='Create a default configuration file and exit')
-def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
+def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenkins_only: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
     """
     Analyze GitHub organization or specific repository for build tool versions, Java versions, and plugin versions
     
@@ -1205,6 +1561,8 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
     if config_obj:
         token = token or config_obj.token
         output = output or config_obj.output.json_report
+        csv = csv or config_obj.output.csv_report
+        html = html or config_obj.output.html_report
         jenkins_only = jenkins_only or config_obj.analysis.jenkins_only
         rate_limit_delay = rate_limit_delay if rate_limit_delay != 0.05 else config_obj.parallelism.rate_limit_delay
         max_workers = max_workers if max_workers != 8 else config_obj.parallelism.max_workers
@@ -1374,17 +1732,17 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
             if verbose:
                 logger.warning(f"Could not check final rate limit: {str(e)}")
         
+        # Always determine analysis mode for all export formats
+        if repo:
+            analysis_mode = 'single_repository'
+        elif jenkins_only:
+            analysis_mode = 'jenkins_only'
+        else:
+            analysis_mode = 'full_analysis'
+        
         # Save JSON report if requested
         # This provides structured data for further analysis or integration
         if output:
-            # Determine analysis mode for report
-            if repo:
-                analysis_mode = 'single_repository'
-            elif jenkins_only:
-                analysis_mode = 'jenkins_only'
-            else:
-                analysis_mode = 'full_analysis'
-            
             report_data = {
                 'organization': org,
                 'target_repository': repo if repo else None,
@@ -1434,6 +1792,20 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
                 json.dump(report_data, f, indent=2)
             
             console.print(f"\n[green]JSON report saved to: {output}[/green]")
+        
+        # Export CSV report if requested
+        if csv:
+            analyzer.export_csv_report(
+                all_build_tools, all_java_versions, all_plugin_versions,
+                csv, org_name, analysis_mode, len(repos), analyzer.api_calls_made, max_workers
+            )
+        
+        # Export HTML report if requested
+        if html:
+            analyzer.export_html_report(
+                all_build_tools, all_java_versions, all_plugin_versions,
+                html, org_name, analysis_mode, len(repos), analyzer.api_calls_made, max_workers
+            )
     
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")

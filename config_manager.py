@@ -49,6 +49,8 @@ class CachingConfig:
 class OutputConfig:
     """Configuration for output settings"""
     json_report: Optional[str] = None
+    csv_report: Optional[str] = None
+    html_report: Optional[str] = None
     verbose: bool = False
 
 
@@ -185,6 +187,8 @@ class ConfigManager:
         output_data = config_data.get('output', {})
         output = OutputConfig(
             json_report=output_data.get('json_report'),
+            csv_report=output_data.get('csv_report'),
+            html_report=output_data.get('html_report'),
             verbose=output_data.get('verbose', False)
         )
         
@@ -253,6 +257,8 @@ class ConfigManager:
             },
             'output': {
                 'json_report': None,
+                'csv_report': None,
+                'html_report': None,
                 'verbose': False
             }
         }

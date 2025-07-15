@@ -109,6 +109,8 @@ caching:
 # Output Configuration
 output:
   json_report: null            # Output file for JSON report (e.g., "report.json") or null to skip
+  csv_report: null             # Output file for CSV report (e.g., "report.csv") or null to skip
+  html_report: null            # Output file for HTML report (e.g., "report.html") or null to skip
   verbose: false               # Enable verbose logging
 ```
 
@@ -125,6 +127,37 @@ python build_check.py --config my-config.yaml
 
 # Command line options override configuration file settings
 python build_check.py --verbose --max-workers 4
+```
+
+### Output Formats
+
+BuildCheck supports multiple output formats for different use cases:
+
+#### Console Output (Default)
+- Rich, colored display with tables and progress bars
+- Summary sections and detailed analysis
+- Perfect for interactive use and quick overview
+
+#### JSON Report (`--output`)
+- Structured data format for programmatic processing
+- Complete dataset with metadata
+- Ideal for integration with other tools and APIs
+
+#### CSV Report (`--csv`)
+- Spreadsheet-friendly format
+- Single table with all findings
+- Perfect for Excel, Google Sheets, or data analysis tools
+
+#### HTML Report (`--html`)
+- Web-friendly format with styling
+- Interactive tables and summary statistics
+- Great for sharing with stakeholders or embedding in dashboards
+
+#### Multiple Formats
+You can generate multiple formats simultaneously:
+
+```bash
+python build_check.py --org your-org --output report.json --csv report.csv --html report.html
 ```
 
 ### Configuration Management
@@ -168,10 +201,20 @@ python build_check.py --org your-organization-name
 python build_check.py --org your-organization-name --repo your-repo-name
 ```
 
-### Save Report to File
+### Save Reports to Files
 
 ```bash
+# JSON report (structured data)
 python build_check.py --org your-organization-name --output report.json
+
+# CSV report (spreadsheet format)
+python build_check.py --org your-organization-name --csv report.csv
+
+# HTML report (web-friendly format)
+python build_check.py --org your-organization-name --html report.html
+
+# Multiple formats at once
+python build_check.py --org your-organization-name --output report.json --csv report.csv --html report.html
 ```
 
 ### Using the Shell Script
@@ -369,6 +412,8 @@ Found 5 repositories without build configurations:
 - `--repo`: Specific repository name to analyze (e.g., "my-repo"). If not specified, analyzes all repositories in the organization.
 - `--token`: GitHub personal access token (optional if set in environment)
 - `--output`: Output file for JSON report (optional)
+- `--csv`: Output file for CSV report (optional)
+- `--html`: Output file for HTML report (optional)
 - `--rate-limit-delay`: Delay between API calls in seconds (default: 0.05 - optimized for performance)
 - `--jenkins-only`: Only analyze repositories with Jenkinsfiles (much faster)
 - `--max-workers`: Maximum number of parallel workers (default: 8, recommended: 4-8)

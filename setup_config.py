@@ -25,7 +25,9 @@ except ImportError:
 @click.option('--max-workers', default=8, help='Number of parallel workers (default: 8)')
 @click.option('--verbose', is_flag=True, help='Enable verbose logging by default')
 @click.option('--output', help='Default output file for JSON reports')
-def setup(org: str, config: str, jenkins_only: bool, max_workers: int, verbose: bool, output: str):
+@click.option('--csv', help='Default output file for CSV reports')
+@click.option('--html', help='Default output file for HTML reports')
+def setup(org: str, config: str, jenkins_only: bool, max_workers: int, verbose: bool, output: str, csv: str, html: str):
     """
     Set up BuildCheck configuration file with your organization settings
     
@@ -77,6 +79,8 @@ def setup(org: str, config: str, jenkins_only: bool, max_workers: int, verbose: 
             },
             'output': {
                 'json_report': output,
+                'csv_report': csv,
+                'html_report': html,
                 'verbose': verbose
             }
         }
@@ -93,6 +97,10 @@ def setup(org: str, config: str, jenkins_only: bool, max_workers: int, verbose: 
         print(f"📝 Verbose logging: {'enabled' if verbose else 'disabled'}")
         if output:
             print(f"📄 JSON output: {output}")
+        if csv:
+            print(f"📊 CSV output: {csv}")
+        if html:
+            print(f"🌐 HTML output: {html}")
         
         print("\n🎉 Setup complete! You can now run BuildCheck with:")
         print(f"   python build_check.py")
@@ -130,6 +138,12 @@ def show_config(config: str):
         print(f"🔧 Jenkins-only mode: {'enabled' if config_obj.analysis.jenkins_only else 'disabled'}")
         print(f"📝 Verbose logging: {'enabled' if config_obj.output.verbose else 'disabled'}")
         print(f"💾 Caching: {'enabled' if config_obj.caching.enabled else 'disabled'}")
+        if config_obj.output.json_report:
+            print(f"📄 JSON report: {config_obj.output.json_report}")
+        if config_obj.output.csv_report:
+            print(f"📊 CSV report: {config_obj.output.csv_report}")
+        if config_obj.output.html_report:
+            print(f"🌐 HTML report: {config_obj.output.html_report}")
         
         if config_obj.exclusions.repositories:
             print(f"🚫 Excluded repositories: {', '.join(config_obj.exclusions.repositories)}")
