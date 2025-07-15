@@ -1,0 +1,47 @@
+# BuildCheck Configuration File
+# This file allows you to configure BuildCheck settings without command line options
+
+# GitHub Organization Configuration
+organization: "your-org-name"  # Required: GitHub organization to analyze
+
+# Performance Settings
+parallelism:
+  max_workers: 8               # Number of parallel workers (default: 8, recommended: 4-8)
+  rate_limit_delay: 0.05       # Delay between API calls in seconds (default: 0.05)
+
+# Repository Exclusions
+# These patterns will exclude repositories from analysis
+exclusions:
+  # Exact repository names to exclude
+  repositories:
+    - "infrastructure-environments"
+    - "infrastructure-modules"
+    - "documentation"
+    - "wiki-content"
+  
+  # Pattern-based exclusions (supports wildcards and regex)
+  patterns:
+    - "terraform-*"            # Exclude all repositories starting with "terraform-"
+    - "*-infra"                # Exclude repositories ending with "-infra"
+    - "legacy-*"               # Exclude repositories starting with "legacy-"
+    - "test-*"                 # Exclude test repositories
+    - "demo-*"                 # Exclude demo repositories
+
+# Analysis Mode
+analysis:
+  jenkins_only: false          # Only analyze repositories with Jenkinsfiles (much faster)
+  single_repository: null      # Analyze specific repository (e.g., "my-repo") or null for all
+
+# Caching Configuration
+caching:
+  enabled: true                # Enable caching of repository lists
+  directory: ".cache"          # Directory to store cache files
+  duration: 3600               # Cache duration in seconds (1 hour)
+
+# Output Configuration
+output:
+  json_report: null            # Output file for JSON report (e.g., "report.json") or null to skip
+  verbose: false               # Enable verbose logging
+
+# GitHub Token (can also be set via GITHUB_TOKEN environment variable)
+# token: "your-github-token"   # Uncomment and set your token here 

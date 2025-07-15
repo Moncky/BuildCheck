@@ -51,6 +51,98 @@ cd BuildCheck
 export GITHUB_TOKEN=your_github_personal_access_token
 ```
 
+## Configuration (Recommended)
+
+BuildCheck supports a YAML configuration file that allows you to set your organization name, parallelism settings, and repository exclusions without having to use command line options every time.
+
+### Quick Setup
+
+```bash
+# Create a configuration file with your organization settings
+python setup_config.py --org your-organization-name
+
+# Or with additional options
+python setup_config.py --org your-organization-name --jenkins-only --max-workers 6 --verbose
+```
+
+### Configuration File Format
+
+The configuration file (`config.yaml`) supports the following settings:
+
+```yaml
+# GitHub Organization Configuration
+organization: "your-org-name"  # Required: GitHub organization to analyze
+
+# Performance Settings
+parallelism:
+  max_workers: 8               # Number of parallel workers (default: 8, recommended: 4-8)
+  rate_limit_delay: 0.05       # Delay between API calls in seconds (default: 0.05)
+
+# Repository Exclusions
+exclusions:
+  # Exact repository names to exclude
+  repositories:
+    - "infrastructure-environments"
+    - "infrastructure-modules"
+    - "documentation"
+    - "wiki-content"
+  
+  # Pattern-based exclusions (supports wildcards and regex)
+  patterns:
+    - "terraform-*"            # Exclude all repositories starting with "terraform-"
+    - "*-infra"                # Exclude repositories ending with "-infra"
+    - "legacy-*"               # Exclude repositories starting with "legacy-"
+    - "test-*"                 # Exclude test repositories
+    - "demo-*"                 # Exclude demo repositories
+
+# Analysis Mode
+analysis:
+  jenkins_only: false          # Only analyze repositories with Jenkinsfiles (much faster)
+  single_repository: null      # Analyze specific repository (e.g., "my-repo") or null for all
+
+# Caching Configuration
+caching:
+  enabled: true                # Enable caching of repository lists
+  directory: ".cache"          # Directory to store cache files
+  duration: 3600               # Cache duration in seconds (1 hour)
+
+# Output Configuration
+output:
+  json_report: null            # Output file for JSON report (e.g., "report.json") or null to skip
+  verbose: false               # Enable verbose logging
+```
+
+### Using Configuration Files
+
+Once you have a configuration file, you can run BuildCheck without command line arguments:
+
+```bash
+# Run with default config.yaml
+python build_check.py
+
+# Run with custom configuration file
+python build_check.py --config my-config.yaml
+
+# Command line options override configuration file settings
+python build_check.py --verbose --max-workers 4
+```
+
+### Configuration Management
+
+```bash
+# Show current configuration settings
+python setup_config.py show-config
+
+# Show configuration from specific file
+python setup_config.py show-config --config my-config.yaml
+
+# Create default configuration file
+python build_check.py --create-config
+
+# Create configuration file with custom path
+python build_check.py --create-config --config my-config.yaml
+```
+
 ## Usage
 
 ### Setup (First Time Only)
@@ -273,18 +365,19 @@ Found 5 repositories without build configurations:
 
 ### Command Line Options
 
-- `--org`: GitHub organization name (required)
+- `--org`: GitHub organization name (can also be set in config file)
 - `--repo`: Specific repository name to analyze (e.g., "my-repo"). If not specified, analyzes all repositories in the organization.
 - `--token`: GitHub personal access token (optional if set in environment)
 - `--output`: Output file for JSON report (optional)
-- `--branch`: Default branch to analyze (default: main)
 - `--rate-limit-delay`: Delay between API calls in seconds (default: 0.05 - optimized for performance)
 - `--jenkins-only`: Only analyze repositories with Jenkinsfiles (much faster)
-- `--max-workers`: Maximum number of parallel workers (default: 4, recommended: 4-8)
+- `--max-workers`: Maximum number of parallel workers (default: 8, recommended: 4-8)
 - `--verbose`: Enable verbose logging for detailed API request information
 - `--use-cache`: Enable caching of repository lists to reduce API calls during development
 - `--cache-dir`: Directory to store cache files (default: .cache)
 - `--clear-cache`: Clear all cache files before running analysis
+- `--config`, `-c`: Path to configuration file (default: config.yaml)
+- `--create-config`: Create a default configuration file and exit
 
 ## Requirements
 

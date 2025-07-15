@@ -40,6 +40,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
+# Import configuration manager
+try:
+    from config_manager import ConfigManager, BuildCheckConfig
+except ImportError:
+    # Fallback if config_manager is not available
+    ConfigManager = None
+    BuildCheckConfig = None
+
 console = Console()
 
 # Configure logging
@@ -102,7 +110,7 @@ class PluginVersion:
 class SimpleBuildAnalyzer:
     """Simplified analyzer focused on actual build tool versions and Java versions"""
     
-    def __init__(self, github_token: str, org_name: str, rate_limit_delay: float = 0.05, max_workers: int = 8, verbose: bool = False, use_cache: bool = False, cache_dir: str = ".cache"):
+    def __init__(self, github_token: str, org_name: str, rate_limit_delay: float = 0.05, max_workers: int = 8, verbose: bool = False, use_cache: bool = False, cache_dir: str = ".cache", exclusions: Optional[Dict[str, List[str]]] = None):
         """
         Initialize the analyzer with GitHub credentials and configuration
         
@@ -114,6 +122,7 @@ class SimpleBuildAnalyzer:
             verbose: Enable verbose logging for detailed API request information
             use_cache: Enable caching of repository lists to reduce API calls during development
             cache_dir: Directory to store cache files (default: .cache)
+            exclusions: Dictionary with 'repositories' and 'patterns' lists for exclusion rules
         """
         self.github = Github(github_token)
         self.org_name = org_name
@@ -132,6 +141,12 @@ class SimpleBuildAnalyzer:
         self.last_rate_limit_check = 0
         self.rate_limit_cache = None
         self.rate_limit_cache_duration = 30  # Cache rate limit info for 30 seconds
+        
+        # Repository exclusions
+        self.exclusions = exclusions or {'repositories': [], 'patterns': []}
+        
+        # Import fnmatch for pattern matching
+        import fnmatch
         
         # Define build tool detection patterns
         # These are ordered by reliability - most reliable sources first
@@ -316,6 +331,27 @@ class SimpleBuildAnalyzer:
                 logging.debug(f"  - Rate limit info not available")
                 logging.debug(f"  - Delay Applied: {self.rate_limit_delay}s")
 
+    def _should_exclude_repository(self, repo_name: str) -> bool:
+        """
+        Check if a repository should be excluded based on exclusion rules
+        
+        Args:
+            repo_name: Name of the repository to check
+            
+        Returns:
+            True if repository should be excluded, False otherwise
+        """
+        # Check exact repository names
+        if repo_name in self.exclusions.get('repositories', []):
+            return True
+        
+        # Check pattern-based exclusions
+        for pattern in self.exclusions.get('patterns', []):
+            if fnmatch.fnmatch(repo_name, pattern):
+                return True
+        
+        return False
+
     def search_repos_with_jenkinsfiles(self) -> List[Repository]:
         """
         Search for repositories that contain Jenkinsfiles using GitHub search API
@@ -381,8 +417,8 @@ class SimpleBuildAnalyzer:
                         progress.advance(task)
                         continue
                     
-                    # Skip archived and empty repositories
-                    if not result.repository.archived and result.repository.size > 0:
+                    # Skip archived, empty, and excluded repositories
+                    if not result.repository.archived and result.repository.size > 0 and not self._should_exclude_repository(repo_name):
                         seen_repos.add(repo_name)
                         repos_with_jenkins.append(result.repository)
                         progress.update(task, description=f"Processing {processed_count}/{search_results.totalCount} results (found: {len(repos_with_jenkins)})")
@@ -439,6 +475,7 @@ class SimpleBuildAnalyzer:
             total_repos = 0
             archived_repos = 0
             empty_repos = 0
+            excluded_repos = 0
             
             # First, count total repositories to set up progress bar
             # We need to iterate twice: once to count, once to process
@@ -481,7 +518,16 @@ class SimpleBuildAnalyzer:
                         empty_repos += 1
                         if self.verbose:
                             logging.debug(f"Skipping empty repository: {repo.name}")
-                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos})")
+                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos + excluded_repos})")
+                        progress.advance(task)
+                        continue
+                    
+                    # Check if repository should be excluded
+                    if self._should_exclude_repository(repo.name):
+                        excluded_repos += 1
+                        if self.verbose:
+                            logging.debug(f"Skipping excluded repository: {repo.name}")
+                        progress.update(task, description=f"Processing {total_repos}/{total_count} repositories (skipped: {archived_repos + empty_repos + excluded_repos})")
                         progress.advance(task)
                         continue
                     
@@ -497,6 +543,7 @@ class SimpleBuildAnalyzer:
                 logging.info(f"  - Total repositories: {total_repos}")
                 logging.info(f"  - Archived repositories (skipped): {archived_repos}")
                 logging.info(f"  - Empty repositories (skipped): {empty_repos}")
+                logging.info(f"  - Excluded repositories (skipped): {excluded_repos}")
                 logging.info(f"  - Repositories for analysis: {len(repos)}")
             
             console.print(f"[green]Found {len(repos)} repositories for analysis[/green]")
@@ -1086,7 +1133,7 @@ class SimpleBuildAnalyzer:
             console.print(table)
 
 @click.command()
-@click.option('--org', required=True, help='GitHub organization name')
+@click.option('--org', help='GitHub organization name (can also be set in config file)')
 @click.option('--repo', help='Specific repository name to analyze (e.g., "my-repo"). If not specified, analyzes all repositories in the organization.')
 @click.option('--token', envvar='GITHUB_TOKEN', help='GitHub personal access token')
 @click.option('--output', '-o', help='Output file for JSON report')
@@ -1097,7 +1144,9 @@ class SimpleBuildAnalyzer:
 @click.option('--use-cache', is_flag=True, help='Enable caching of repository lists to reduce API calls during development')
 @click.option('--cache-dir', default='.cache', help='Directory to store cache files (default: .cache)')
 @click.option('--clear-cache', is_flag=True, help='Clear all cache files before running analysis')
-def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool):
+@click.option('--config', '-c', help='Path to configuration file (default: config.yaml)')
+@click.option('--create-config', is_flag=True, help='Create a default configuration file and exit')
+def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
     """
     Analyze GitHub organization or specific repository for build tool versions, Java versions, and plugin versions
     
@@ -1116,8 +1165,56 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
     - Plugin version detection from gradle.properties files
     """
     
+    # Handle configuration file creation
+    if create_config:
+        if ConfigManager is None:
+            console.print("[red]Error: Configuration manager not available. Cannot create config file.[/red]")
+            return
+        
+        try:
+            config_manager = ConfigManager(config)
+            config_manager.create_default_config()
+            console.print(f"[green]Default configuration file created: {config_manager.config_file}[/green]")
+            console.print("[blue]Please edit the configuration file with your organization name and other settings.[/blue]")
+            return
+        except Exception as e:
+            console.print(f"[red]Error creating configuration file: {str(e)}[/red]")
+            return
+    
+    # Load configuration from file if available
+    config_obj = None
+    if ConfigManager is not None:
+        try:
+            config_manager = ConfigManager(config)
+            config_obj = config_manager.load_config()
+            console.print(f"[green]Loaded configuration from: {config_manager.config_file}[/green]")
+        except FileNotFoundError:
+            if config:  # Only warn if user explicitly specified a config file
+                console.print(f"[yellow]Configuration file not found: {config}[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Error loading configuration: {str(e)}[/red]")
+            return
+    
+    # Use configuration values or command line arguments
+    org_name = org or (config_obj.organization if config_obj else None)
+    if not org_name:
+        console.print("[red]Error: Organization name is required. Set --org option or configure in config file.[/red]")
+        return
+    
+    # Override config with command line arguments if provided
+    if config_obj:
+        token = token or config_obj.token
+        output = output or config_obj.output.json_report
+        jenkins_only = jenkins_only or config_obj.analysis.jenkins_only
+        rate_limit_delay = rate_limit_delay if rate_limit_delay != 0.05 else config_obj.parallelism.rate_limit_delay
+        max_workers = max_workers if max_workers != 8 else config_obj.parallelism.max_workers
+        verbose = verbose or config_obj.output.verbose
+        use_cache = use_cache or config_obj.caching.enabled
+        cache_dir = cache_dir if cache_dir != '.cache' else config_obj.caching.directory
+        repo = repo or config_obj.analysis.single_repository
+    
     if not token:
-        console.print("[red]Error: GitHub token is required. Set GITHUB_TOKEN environment variable or use --token option.[/red]")
+        console.print("[red]Error: GitHub token is required. Set GITHUB_TOKEN environment variable, use --token option, or configure in config file.[/red]")
         return
     
     try:
@@ -1128,8 +1225,16 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
             logger.info("Verbose logging enabled - detailed API request information will be shown")
             console.print("[bold green]Verbose logging enabled[/bold green]")
 
+        # Prepare exclusions for analyzer
+        exclusions = None
+        if config_obj:
+            exclusions = {
+                'repositories': config_obj.exclusions.repositories,
+                'patterns': config_obj.exclusions.patterns
+            }
+        
         # Initialize analyzer with configuration
-        analyzer = SimpleBuildAnalyzer(token, org, rate_limit_delay, max_workers, verbose, use_cache, cache_dir)
+        analyzer = SimpleBuildAnalyzer(token, org_name, rate_limit_delay, max_workers, verbose, use_cache, cache_dir, exclusions)
         
         # Show cache status
         if use_cache:
@@ -1238,6 +1343,14 @@ def main(org: str, repo: str, token: str, output: str, jenkins_only: bool, rate_
         console.print(f"[blue]Total plugin versions found: {len(all_plugin_versions)}[/blue]")
         console.print(f"[blue]Total API calls made: {analyzer.api_calls_made}[/blue]")
         console.print(f"[blue]Parallel workers used: {max_workers}[/blue]")
+        
+        # Show excluded repositories if any
+        if config_obj and (config_obj.exclusions.repositories or config_obj.exclusions.patterns):
+            console.print(f"\n[bold yellow]Repository Exclusions Applied:[/bold yellow]")
+            if config_obj.exclusions.repositories:
+                console.print(f"[yellow]Excluded repositories: {', '.join(config_obj.exclusions.repositories)}[/yellow]")
+            if config_obj.exclusions.patterns:
+                console.print(f"[yellow]Exclusion patterns: {', '.join(config_obj.exclusions.patterns)}[/yellow]")
         
         if verbose:
             logger.info(f"Analysis completed successfully:")
