@@ -1,0 +1,358 @@
+# BuildCheck - GitHub Organization Build Analysis Tool
+# Cursor Rules for Development
+
+## Project Overview
+BuildCheck is a Python tool for analyzing GitHub organizations to identify build tools, their versions, and Artifactory repository usage across Jenkins jobs and CI/CD pipelines. The project focuses on performance, accuracy, and comprehensive reporting.
+
+## Architecture & Design Principles
+
+### Core Design Decisions
+1. **Accuracy over Completeness**: Better to miss some repos than report incorrect versions
+2. **Performance First**: Optimized for large organizations with rate limiting and caching
+3. **Modular Design**: Separate analyzers for different build tools and CI/CD systems
+4. **Transparent Detection**: Clear tracking of how each version was found
+5. **Root-Only Scanning**: Only checks files in repository root for speed
+
+### Code Organization
+- `build_check.py`: Main application with CLI interface and orchestration
+- `jenkins_analyzer.py`: Specialized Jenkins pipeline analysis
+- `cache_manager.py`: Cache management utilities
+- `tests/`: Comprehensive test suite with pytest
+
+## Coding Standards
+
+### Python Style
+- Follow PEP 8 with 4-space indentation
+- Use type hints for all function parameters and return values
+- Use dataclasses for structured data (`@dataclass`)
+- Prefer f-strings over `.format()` or `%` formatting
+- Use descriptive variable names (avoid abbreviations)
+
+### Documentation
+- All public functions must have docstrings following Google style
+- Include type information in docstrings
+- Document complex regex patterns with examples
+- Add inline comments for non-obvious logic
+
+### Error Handling
+- Use specific exception types (not bare `except:`)
+- Log errors with appropriate levels (DEBUG, INFO, WARNING, ERROR)
+- Graceful degradation when API calls fail
+- Provide clear error messages to users
+
+### Performance Considerations
+- Cache expensive operations (API calls, file reads)
+- Use rate limiting for GitHub API (default: 0.05s delay)
+- Implement parallel processing with ThreadPoolExecutor
+- Optimize regex patterns for speed
+
+## Build Tool Detection Patterns
+
+### Maven Detection
+```python
+# Files to check (in order of reliability)
+'.mvn/wrapper/maven-wrapper.properties',  # Most reliable
+'maven-wrapper.properties',              # Alternative location
+'pom.xml',                               # Check for explicit version
+'Jenkinsfile'                            # Jenkins tool configuration
+
+# Version patterns
+r'distributionUrl=.*?apache-maven-([\d.]+)-bin\.zip',  # Wrapper URL
+r'<maven\.version>([^<]+)</maven\.version>',          # Explicit version
+```
+
+### Gradle Detection
+```python
+# Files to check
+'gradle/wrapper/gradle-wrapper.properties',  # Most reliable
+'gradle.properties',                         # Version properties
+'build.gradle',                              # Explicit version
+'Jenkinsfile'                                # Jenkins tool configuration
+
+# Version patterns
+r'distributionUrl=.*?gradle-([\d.]+)-bin\.zip',  # Wrapper URL
+r'gradleVersion\s*=\s*[\'"]([^\'"]+)[\'"]',      # Explicit version
+```
+
+### Other Build Tools
+- **npm**: `package.json`, `package-lock.json`
+- **Grunt**: `Gruntfile.js`, `Gruntfile.coffee`, `package.json`
+- **Packer**: `*.pkr.hcl`, `*.pkr.json`, `packer.json`
+- **Docker**: `Dockerfile`, `docker-compose.yml`
+
+## API Integration Patterns
+
+### GitHub API Usage
+- Always use rate limiting (default: 0.05s delay)
+- Cache rate limit information for 30 seconds
+- Handle `RateLimitExceededException` gracefully
+- Use PyGithub library for API interactions
+
+### Rate Limiting Implementation
+```python
+def _check_rate_limit(self):
+    """Check and handle GitHub API rate limits"""
+    # Cache rate limit info for 30 seconds
+    # Add delays when approaching limits
+    # Wait for reset when exceeded
+```
+
+### Caching Strategy
+- Cache repository lists for 1 hour
+- Use pickle for serialization
+- Implement cache invalidation
+- Provide cache management utilities
+
+## Testing Standards
+
+### Test Organization
+- Unit tests: `@pytest.mark.unit` - test individual functions
+- Integration tests: `@pytest.mark.integration` - test components together
+- Slow tests: `@pytest.mark.slow` - tests with real API calls
+
+### Test Patterns
+- Use fixtures for common setup (`conftest.py`)
+- Mock external dependencies (GitHub API)
+- Test error conditions and edge cases
+- Verify rate limiting behavior
+- Test caching functionality
+
+### Test Commands
+```bash
+# Run all tests
+./run_tests.sh
+
+# Run with coverage
+./run_tests.sh --coverage
+
+# Run specific test categories
+./run_tests.sh --unit
+./run_tests.sh --integration
+./run_tests.sh --slow
+```
+
+## CLI Interface Standards
+
+### Click Usage
+- Use `@click.command()` for main commands
+- Use `@click.option()` for parameters
+- Provide helpful help text for all options
+- Use environment variables for sensitive data (`envvar='GITHUB_TOKEN'`)
+
+### Command Structure
+```python
+@click.command()
+@click.option('--org', required=True, help='GitHub organization name')
+@click.option('--repo', help='Specific repository name to analyze')
+@click.option('--token', envvar='GITHUB_TOKEN', help='GitHub personal access token')
+@click.option('--output', '-o', help='Output file for JSON report')
+@click.option('--jenkins-only', is_flag=True, help='Only analyze repositories with Jenkinsfiles')
+@click.option('--rate-limit-delay', default=0.05, help='Delay between API calls in seconds')
+@click.option('--max-workers', default=8, help='Maximum number of parallel workers')
+@click.option('--verbose', is_flag=True, help='Enable verbose logging')
+@click.option('--use-cache', is_flag=True, help='Enable caching of repository lists')
+@click.option('--cache-dir', default='.cache', help='Directory to store cache files')
+@click.option('--clear-cache', is_flag=True, help='Clear all cache files before running analysis')
+```
+
+## Logging Standards
+
+### Logging Configuration
+- Use structured logging with timestamps
+- Different levels for different verbosity
+- Include context in log messages
+- Use Rich library for console output
+
+### Logging Levels
+- DEBUG: Detailed API request information
+- INFO: General progress and results
+- WARNING: Rate limit approaching, missing files
+- ERROR: API failures, parsing errors
+
+## Data Structures
+
+### Core Dataclasses
+```python
+@dataclass
+class BuildTool:
+    name: str
+    version: Optional[str]
+    file_path: str
+    repository: str
+    branch: str
+    detection_method: str
+
+@dataclass
+class JavaVersion:
+    version: Optional[str]
+    source_compatibility: Optional[str]
+    target_compatibility: Optional[str]
+    file_path: str
+    repository: str
+    branch: str
+    detection_method: str
+
+@dataclass
+class PluginVersion:
+    plugin_name: str
+    version: Optional[str]
+    file_path: str
+    repository: str
+    branch: str
+    detection_method: str
+```
+
+## Performance Optimization Guidelines
+
+### API Call Optimization
+- Cache rate limit information
+- Use smart delays (0.05s default)
+- Implement parallel processing
+- Reduce redundant API calls
+
+### File Processing
+- Only scan root directory files
+- Use efficient regex patterns
+- Cache file contents when possible
+- Handle large files gracefully
+
+### Memory Management
+- Use generators for large datasets
+- Clear caches when appropriate
+- Monitor memory usage in tests
+
+## Security Considerations
+
+### Token Management
+- Never hardcode GitHub tokens
+- Use environment variables
+- Validate token permissions
+- Handle token expiration gracefully
+
+### Input Validation
+- Validate organization names
+- Sanitize file paths
+- Handle malformed JSON/YAML
+- Validate regex patterns
+
+## Development Workflow
+
+### Environment Setup
+```bash
+# Set up virtual environment
+./setup.sh
+
+# Set GitHub token
+export GITHUB_TOKEN=your_token_here
+
+# Activate environment
+source venv/bin/activate
+```
+
+### Development Commands
+```bash
+# Run analysis
+python build_check.py --org your-org --verbose
+
+# Run tests
+./run_tests.sh
+
+# Manage cache
+python cache_manager.py list
+python cache_manager.py clear
+```
+
+### Code Quality
+- Run tests before committing
+- Check coverage reports
+- Validate CLI interface
+- Test with real organizations
+
+## Common Patterns
+
+### Repository Analysis
+```python
+def analyze_repository(self, repo: Repository) -> Tuple[List[BuildTool], List[JavaVersion], List[PluginVersion]]:
+    """Analyze a single repository for build tools and versions"""
+    # Check rate limits
+    # Get file contents
+    # Apply detection patterns
+    # Return structured results
+```
+
+### Pattern Matching
+```python
+def _extract_version(self, content: str, patterns: List[str]) -> Optional[str]:
+    """Extract version using multiple regex patterns"""
+    for pattern in patterns:
+        match = re.search(pattern, content)
+        if match:
+            return match.group(1)
+    return None
+```
+
+### Progress Tracking
+```python
+# Use Rich library for progress bars
+with Progress() as progress:
+    task = progress.add_task("Analyzing...", total=total_repos)
+    # Update progress as repositories are processed
+```
+
+## Error Handling Patterns
+
+### API Error Handling
+```python
+try:
+    content = repo.get_contents(file_path)
+    return content.decoded_content.decode('utf-8')
+except GithubException as e:
+    if e.status == 404:
+        return None  # File not found
+    else:
+        raise  # Re-raise other errors
+```
+
+### Rate Limit Handling
+```python
+try:
+    # Make API call
+except RateLimitExceededException:
+    # Wait for reset
+    # Retry call
+```
+
+## Documentation Standards
+
+### README Updates
+- Update README.md when adding new features
+- Include usage examples
+- Document new command line options
+- Update performance metrics
+
+### Code Comments
+- Comment complex regex patterns
+- Explain performance optimizations
+- Document API rate limiting logic
+- Add context for error handling
+
+## Future Development Guidelines
+
+### Adding New Build Tools
+1. Define detection patterns in `build_tools` dict
+2. Add file patterns and version regex
+3. Update Jenkins analyzer patterns
+4. Add tests for new tool detection
+5. Update documentation
+
+### Performance Improvements
+- Profile code for bottlenecks
+- Optimize regex patterns
+- Implement smarter caching
+- Add parallel processing where appropriate
+
+### Feature Additions
+- Maintain backward compatibility
+- Add comprehensive tests
+- Update CLI interface
+- Document new features 

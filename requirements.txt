@@ -1,0 +1,10 @@
+PyGithub==2.1.1
+requests==2.31.0
+pyyaml==6.0.1
+jinja2==3.1.2
+python-dotenv==1.0.0
+rich==13.7.0
+click==8.1.7
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0 
