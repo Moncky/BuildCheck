@@ -33,6 +33,7 @@ import click
 import time
 import logging
 import pickle
+import fnmatch
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -145,9 +146,6 @@ class SimpleBuildAnalyzer:
         
         # Repository exclusions
         self.exclusions = exclusions or {'repositories': [], 'patterns': []}
-        
-        # Import fnmatch for pattern matching
-        import fnmatch
         
         # Define build tool detection patterns
         # These are ordered by reliability - most reliable sources first
