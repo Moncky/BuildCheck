@@ -60,7 +60,8 @@ class TestConfigManager:
             'organization': 'test-org',
             'parallelism': {
                 'max_workers': 4,
-                'rate_limit_delay': 0.1
+                'rate_limit_delay': 0.1,
+                'optimized': True
             },
             'exclusions': {
                 'repositories': ['test-repo'],
@@ -92,6 +93,7 @@ class TestConfigManager:
             assert config.organization == 'test-org'
             assert config.parallelism.max_workers == 4
             assert config.parallelism.rate_limit_delay == 0.1
+            assert config.parallelism.optimized is True
             assert config.exclusions.repositories == ['test-repo']
             assert config.exclusions.patterns == ['test-*']
             assert config.analysis.jenkins_only is True
@@ -122,6 +124,7 @@ class TestConfigManager:
             assert config.organization == 'test-org'
             assert config.parallelism.max_workers == 8
             assert config.parallelism.rate_limit_delay == 0.05
+            assert config.parallelism.optimized is False
             assert config.exclusions.repositories == []
             assert config.exclusions.patterns == []
             assert config.analysis.jenkins_only is False

@@ -231,7 +231,8 @@ class ConfigManager:
             'organization': 'your-org-name',
             'parallelism': {
                 'max_workers': 8,
-                'rate_limit_delay': 0.05
+                'rate_limit_delay': 0.05,
+                'optimized': False
             },
             'exclusions': {
                 'repositories': [

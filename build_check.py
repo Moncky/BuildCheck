@@ -1794,8 +1794,19 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
         
         # Show cache status
         if use_cache:
+            cache_duration = config_obj.caching.duration if config_obj else 3600
+            cache_hours = int(cache_duration) // 3600
+            cache_minutes = (int(cache_duration) % 3600) // 60
+            if cache_hours > 0:
+                duration_str = f"{cache_hours} hour{'s' if cache_hours > 1 else ''}"
+                if cache_minutes > 0:
+                    duration_str += f" {cache_minutes} minute{'s' if cache_minutes > 1 else ''}"
+            elif cache_minutes > 0:
+                duration_str = f"{cache_minutes} minute{'s' if cache_minutes > 1 else ''}"
+            else:
+                duration_str = f"{cache_duration} seconds"
             console.print(f"[bold green]Caching enabled[/bold green] - Cache directory: {cache_dir}")
-            console.print("[green]Repository lists will be cached for 1 hour to reduce API calls[/green]")
+            console.print(f"[green]Repository lists will be cached for {duration_str} to reduce API calls[/green]")
         else:
             console.print("[dim]Caching disabled - use --use-cache to enable[/dim]")
         
