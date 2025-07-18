@@ -17,6 +17,9 @@ BuildCheck is a comprehensive tool for analyzing GitHub organizations to identif
 - 🚀 **Parallel Processing**: Multi-threaded analysis for faster processing
 - 📊 **Enhanced Progress**: Real-time progress with file analysis tracking
 - 🔍 **Repository Discovery Progress**: Visual progress tracking for repository discovery and filtering
+- 📊 **API Call Prediction**: Predict API usage before starting analysis to avoid rate limits
+- ⚡ **Bulk File Fetching**: Reduce API calls by up to 80% using optimized bulk operations
+- 🎯 **Organization Size Estimation**: Quick assessment of repository count without full enumeration
 
 ## Supported Build Tools
 
@@ -295,6 +298,59 @@ python cache_manager.py clear --org your-organization-name
 
 # Inspect a specific cache file
 python cache_manager.py inspect your-org_jenkins_repos.pkl
+```
+
+### API Optimization for Large Organizations
+
+BuildCheck includes advanced API optimization features to handle large organizations efficiently:
+
+#### 1. API Call Prediction
+
+Predict API usage before starting analysis:
+
+```bash
+# Predict API usage for full analysis
+python build_check.py --org your-org --predict-api
+
+# Predict API usage for Jenkins-only mode
+python build_check.py --org your-org --jenkins-only --predict-api
+```
+
+#### 2. Bulk Analysis Mode
+
+Use bulk file fetching to dramatically reduce API calls:
+
+```bash
+# Use bulk analysis for better efficiency
+python build_check.py --org your-org --bulk-analysis
+
+# Combine with other optimizations
+python build_check.py --org your-org --jenkins-only --bulk-analysis --predict-api
+```
+
+#### 3. Performance Comparison
+
+| Mode | API Calls | Time | Use Case |
+|------|-----------|------|----------|
+| **Full Analysis** | ~10 per repo | Slow | Complete analysis |
+| **Jenkins-Only** | ~3 per repo | Fast | CI/CD focus |
+| **Bulk Analysis** | ~2 per repo | Very Fast | Large organizations |
+| **Cached** | ~1 per repo | Instant | Repeated runs |
+
+#### 4. Best Practices for Large Organizations
+
+```bash
+# For organizations with 500+ repositories
+python build_check.py --org your-org --jenkins-only --bulk-analysis --predict-api --use-cache --max-workers 4
+
+# For development and testing
+python build_check.py --org your-org --use-cache --verbose
+
+# For maximum efficiency
+python build_check.py --org your-org --jenkins-only --bulk-analysis --rate-limit-delay 0.05
+```
+
+For detailed information about API optimization, see [API_OPTIMIZATION_GUIDE.md](API_OPTIMIZATION_GUIDE.md).
 ```
 
 ## What It Analyzes

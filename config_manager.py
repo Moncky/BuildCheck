@@ -25,6 +25,27 @@ class ParallelismConfig:
 
 
 @dataclass
+class APIOptimizationConfig:
+    """Configuration for API optimization settings"""
+    predict_api_calls: bool = True
+    prediction_warning_threshold: int = 3000
+    bulk_analysis: bool = True
+    bulk_file_limit: int = 10
+    adaptive_rate_limiting: bool = True
+    conservative_mode: bool = False
+    strategies: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.strategies is None:
+            self.strategies = {
+                'jenkins_only': True,
+                'skip_archived': True,
+                'skip_forks': False,
+                'max_repositories': None
+            }
+
+
+@dataclass
 class ExclusionConfig:
     """Configuration for repository exclusions"""
     repositories: List[str]
@@ -60,6 +81,7 @@ class BuildCheckConfig:
     """Main configuration class that holds all BuildCheck settings"""
     organization: str
     parallelism: ParallelismConfig
+    api_optimization: APIOptimizationConfig
     exclusions: ExclusionConfig
     analysis: AnalysisConfig
     caching: CachingConfig
@@ -159,6 +181,18 @@ class ConfigManager:
         if parallelism.rate_limit_delay < 0:
             raise ValueError("rate_limit_delay must be non-negative")
         
+        # Load API optimization configuration
+        api_optimization_data = config_data.get('api_optimization', {})
+        api_optimization = APIOptimizationConfig(
+            predict_api_calls=api_optimization_data.get('predict_api_calls', True),
+            prediction_warning_threshold=api_optimization_data.get('prediction_warning_threshold', 3000),
+            bulk_analysis=api_optimization_data.get('bulk_analysis', True),
+            bulk_file_limit=api_optimization_data.get('bulk_file_limit', 10),
+            adaptive_rate_limiting=api_optimization_data.get('adaptive_rate_limiting', True),
+            conservative_mode=api_optimization_data.get('conservative_mode', False),
+            strategies=api_optimization_data.get('strategies')
+        )
+        
         # Load exclusion configuration
         exclusions_data = config_data.get('exclusions', {})
         exclusions = ExclusionConfig(
@@ -200,6 +234,7 @@ class ConfigManager:
         return BuildCheckConfig(
             organization=config_data['organization'],
             parallelism=parallelism,
+            api_optimization=api_optimization,
             exclusions=exclusions,
             analysis=analysis,
             caching=caching,
@@ -233,6 +268,20 @@ class ConfigManager:
                 'max_workers': 8,
                 'rate_limit_delay': 0.05,
                 'optimized': False
+            },
+            'api_optimization': {
+                'predict_api_calls': True,
+                'prediction_warning_threshold': 3000,
+                'bulk_analysis': True,
+                'bulk_file_limit': 10,
+                'adaptive_rate_limiting': True,
+                'conservative_mode': False,
+                'strategies': {
+                    'jenkins_only': True,
+                    'skip_archived': True,
+                    'skip_forks': False,
+                    'max_repositories': None
+                }
             },
             'exclusions': {
                 'repositories': [

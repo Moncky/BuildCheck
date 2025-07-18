@@ -2,12 +2,34 @@
 # This file allows you to configure BuildCheck settings without command line options
 
 # GitHub Organization Configuration
-organization: "your-org-name"  # Required: GitHub organization to analyze
+organization: "Aer-Lingus"  # Required: GitHub organization to analyze
 
 # Performance Settings
 parallelism:
   max_workers: 8               # Number of parallel workers (default: 8, recommended: 4-8)
   rate_limit_delay: 0.05       # Delay between API calls in seconds (default: 0.05)
+  optimized: true              # Use optimized mode for large organizations (reduces API calls)
+
+# API Optimization Settings
+api_optimization:
+  # API Call Prediction
+  predict_api_calls: true      # Predict API call usage before analysis (helps avoid rate limits)
+  prediction_warning_threshold: 3000  # Warn if predicted calls exceed this number
+  
+  # Bulk Analysis Features
+  bulk_analysis: true          # Use bulk file fetching to reduce API calls
+  bulk_file_limit: 10          # Maximum files to fetch in bulk per repository
+  
+  # Smart Rate Limiting
+  adaptive_rate_limiting: true # Adjust delays based on rate limit status
+  conservative_mode: false     # Use more conservative rate limiting for large orgs
+  
+  # API Call Reduction Strategies
+  strategies:
+    jenkins_only: true         # Only analyze repositories with Jenkinsfiles
+    skip_archived: true        # Skip archived repositories
+    skip_forks: false          # Skip forked repositories (set to true to reduce calls)
+    max_repositories: null     # Limit total repositories analyzed (null = no limit)
 
 # Repository Exclusions
 # These patterns will exclude repositories from analysis
@@ -29,19 +51,19 @@ exclusions:
 
 # Analysis Mode
 analysis:
-  jenkins_only: false          # Only analyze repositories with Jenkinsfiles (much faster)
+  jenkins_only: true          # Only analyze repositories with Jenkinsfiles (much faster)
   single_repository: null      # Analyze specific repository (e.g., "my-repo") or null for all
 
 # Caching Configuration
 caching:
   enabled: true                # Enable caching of repository lists
   directory: ".cache"          # Directory to store cache files
-  duration: 3600               # Cache duration in seconds (1 hour)
+  duration: 7200               # Cache duration in seconds (1 hour)
 
 # Output Configuration
 output:
-  json_report: null            # Output file for JSON report (e.g., "report.json") or null to skip
-  csv_report: null             # Output file for CSV report (e.g., "report.csv") or null to skip
+  json_report: report.json            # Output file for JSON report (e.g., "report.json") or null to skip
+  csv_report: report.csv             # Output file for CSV report (e.g., "report.csv") or null to skip
   html_report: report.html            # Output file for HTML report (e.g., "report.html") or null to skip
   verbose: false               # Enable verbose logging
 

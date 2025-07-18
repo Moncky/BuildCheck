@@ -50,9 +50,86 @@ except ImportError:
     ConfigManager = None
     BuildCheckConfig = None
 
+# Import API optimizer
+try:
+    from api_optimizer import APIOptimizer, APIPrediction
+except ImportError:
+    # Fallback if api_optimizer is not available
+    APIOptimizer = None
+    APIPrediction = None
+
 console = Console()
 
 # Configure logging
+def display_configuration(org_name: str, token: str, output: str, csv: str, html: str, 
+                         jenkins_only: bool, optimized: bool, rate_limit_delay: float, 
+                         max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, 
+                         repo: str, predict_api: bool, bulk_analysis: bool, config_obj=None):
+    """Display the configuration as interpreted by the script"""
+    console.print("\n[bold blue]BuildCheck Configuration[/bold blue]")
+    console.print("=" * 50)
+    
+    # Basic settings
+    console.print(f"[bold]Organization:[/bold] {org_name or 'Not set'}")
+    console.print(f"[bold]Repository:[/bold] {repo or 'All repositories'}")
+    console.print(f"[bold]Token:[/bold] {'Set' if token else 'Not set'}")
+    
+    # Analysis settings
+    console.print(f"\n[bold]Analysis Settings:[/bold]")
+    console.print(f"  Jenkins Only: {jenkins_only}")
+    console.print(f"  Optimized Mode: {optimized}")
+    console.print(f"  Verbose Logging: {verbose}")
+    
+    # Performance settings
+    console.print(f"\n[bold]Performance Settings:[/bold]")
+    console.print(f"  Max Workers: {max_workers}")
+    console.print(f"  Rate Limit Delay: {rate_limit_delay}s")
+    
+    # API Optimization settings
+    console.print(f"\n[bold]API Optimization Settings:[/bold]")
+    console.print(f"  Predict API Calls: {predict_api}")
+    console.print(f"  Bulk Analysis: {bulk_analysis}")
+    
+    # Caching settings
+    console.print(f"\n[bold]Caching Settings:[/bold]")
+    console.print(f"  Enabled: {use_cache}")
+    console.print(f"  Cache Directory: {cache_dir}")
+    
+    # Output settings
+    console.print(f"\n[bold]Output Settings:[/bold]")
+    console.print(f"  JSON Report: {output or 'Not set'}")
+    console.print(f"  CSV Report: {csv or 'Not set'}")
+    console.print(f"  HTML Report: {html or 'Not set'}")
+    
+    # Configuration source
+    if config_obj:
+        console.print(f"\n[bold]Configuration Source:[/bold] config.yaml")
+        console.print(f"[dim]Configuration file loaded successfully[/dim]")
+        
+        # Show API optimization details from config
+        if hasattr(config_obj, 'api_optimization'):
+            console.print(f"\n[bold]API Optimization Details:[/bold]")
+            api_config = config_obj.api_optimization
+            console.print(f"  Prediction Threshold: {api_config.prediction_warning_threshold}")
+            console.print(f"  Bulk File Limit: {api_config.bulk_file_limit}")
+            console.print(f"  Adaptive Rate Limiting: {api_config.adaptive_rate_limiting}")
+            console.print(f"  Conservative Mode: {api_config.conservative_mode}")
+            console.print(f"  Strategies: {api_config.strategies}")
+        
+        # Show exclusions
+        if config_obj.exclusions.repositories or config_obj.exclusions.patterns:
+            console.print(f"\n[bold]Repository Exclusions:[/bold]")
+            if config_obj.exclusions.repositories:
+                console.print(f"  Repositories: {', '.join(config_obj.exclusions.repositories)}")
+            if config_obj.exclusions.patterns:
+                console.print(f"  Patterns: {', '.join(config_obj.exclusions.patterns)}")
+    else:
+        console.print(f"\n[bold]Configuration Source:[/bold] Command line arguments only")
+        console.print(f"[dim]No configuration file loaded[/dim]")
+    
+    console.print("\n" + "=" * 50)
+
+
 def setup_logging(verbose: bool = False):
     """Setup logging configuration based on verbose flag"""
     if verbose:
@@ -146,6 +223,9 @@ class SimpleBuildAnalyzer:
         
         # Repository exclusions
         self.exclusions = exclusions or {'repositories': [], 'patterns': []}
+        
+        # API optimizer for prediction and optimization
+        self.api_optimizer = APIOptimizer(self.github, org_name, verbose) if APIOptimizer else None
         
         # Define build tool detection patterns
         # These are ordered by reliability - most reliable sources first
@@ -329,6 +409,38 @@ class SimpleBuildAnalyzer:
                 logging.debug(f"API Call #{self.api_calls_made}: {call_description}")
                 logging.debug(f"  - Rate limit info not available")
                 logging.debug(f"  - Delay Applied: {self.rate_limit_delay}s")
+
+    def predict_api_usage(self, jenkins_only: bool = False) -> Optional[APIPrediction]:
+        """
+        Predict API usage before starting analysis
+        
+        Args:
+            jenkins_only: Whether to analyze only Jenkins repositories
+            
+        Returns:
+            APIPrediction object with detailed estimates, or None if optimizer not available
+        """
+        if not self.api_optimizer:
+            console.print("[yellow]API optimizer not available - skipping prediction[/yellow]")
+            return None
+        
+        console.print("[bold blue]Predicting API usage...[/bold blue]")
+        
+        # Get organization size estimate
+        estimated_repos = self.api_optimizer.get_organization_size_estimate()
+        
+        # Create prediction
+        prediction = self.api_optimizer.predict_api_calls(
+            estimated_repos=estimated_repos,
+            jenkins_only=jenkins_only,
+            use_cache=self.use_cache,
+            max_workers=self.max_workers
+        )
+        
+        # Display prediction
+        self.api_optimizer.display_prediction(prediction)
+        
+        return prediction
 
     def _should_exclude_repository(self, repo_name: str) -> bool:
         """
@@ -758,6 +870,161 @@ class SimpleBuildAnalyzer:
                 progress_task.advance(1)
             console.print(f"[red]Error analyzing {repo.name}: {str(e)}[/red]")
             return [], [], []
+
+    def analyze_repositories_bulk(self, repositories: List[Repository]) -> Tuple[List[BuildTool], List[JavaVersion], List[PluginVersion]]:
+        """
+        Analyze multiple repositories using bulk file fetching for better API efficiency
+        
+        This method uses the API optimizer to fetch file contents in bulk, reducing
+        the number of API calls significantly compared to individual repository analysis.
+        
+        Args:
+            repositories: List of repositories to analyze
+            
+        Returns:
+            Tuple of (build_tools, java_versions, plugin_versions) found in all repositories
+        """
+        if not self.api_optimizer:
+            console.print("[yellow]API optimizer not available - falling back to individual analysis[/yellow]")
+            return self.analyze_repositories_individual(repositories)
+        
+        console.print(f"[bold blue]Analyzing {len(repositories)} repositories using bulk file fetching...[/bold blue]")
+        
+        # Get all file patterns we need to check
+        all_file_patterns = []
+        for tool_config in self.build_tools.values():
+            all_file_patterns.extend(tool_config['files'])
+        
+        # Remove duplicates and optimize order
+        unique_patterns = list(dict.fromkeys(all_file_patterns))  # Preserve order
+        optimized_patterns = self.api_optimizer.optimize_file_check_order(unique_patterns)
+        
+        if self.verbose:
+            logging.info(f"Optimized file patterns: {optimized_patterns}")
+        
+        # Bulk fetch file contents
+        file_contents = self.api_optimizer.bulk_fetch_file_contents(
+            repositories=repositories,
+            file_patterns=optimized_patterns,
+            max_workers=self.max_workers
+        )
+        
+        # Analyze file contents
+        all_build_tools = []
+        all_java_versions = []
+        all_plugin_versions = []
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(
+                f"Analyzing file contents for {len(repositories)} repositories...", 
+                total=len(repositories)
+            )
+            
+            for repo in repositories:
+                repo_name = repo.name
+                repo_files = file_contents.get(repo_name, {})
+                
+                # Analyze build tools
+                for tool_name, tool_config in self.build_tools.items():
+                    for file_name in tool_config['files']:
+                        if file_name in repo_files:
+                            content = repo_files[file_name]
+                            version = self._extract_version(content, tool_config['version_patterns'])
+                            if version:
+                                all_build_tools.append(BuildTool(
+                                    name=tool_name,
+                                    version=version,
+                                    file_path=file_name,
+                                    repository=repo_name,
+                                    branch=repo.default_branch,
+                                    detection_method=f"Found in {file_name} (bulk analysis)"
+                                ))
+                                break  # Found version for this tool
+                
+                # Analyze Java versions
+                for build_tool, java_config in self.java_version_patterns.items():
+                    for file_name in java_config['files']:
+                        if file_name in repo_files:
+                            content = repo_files[file_name]
+                            java_version = self._extract_java_version(
+                                content, java_config['patterns'], build_tool, 
+                                file_name, repo_name, repo.default_branch
+                            )
+                            if java_version:
+                                all_java_versions.append(java_version)
+                                break  # Found Java version for this build tool
+                
+                # Analyze plugin versions
+                for build_tool, plugin_config in self.plugin_version_patterns.items():
+                    for file_name in plugin_config['files']:
+                        if file_name in repo_files:
+                            content = repo_files[file_name]
+                            plugin_version = self._extract_plugin_version(
+                                content, plugin_config['patterns'], build_tool,
+                                file_name, repo_name, repo.default_branch
+                            )
+                            if plugin_version:
+                                all_plugin_versions.append(plugin_version)
+                                break  # Found plugin version for this build tool
+                
+                progress.advance(task)
+        
+        console.print(f"[green]Bulk analysis completed: {len(all_build_tools)} build tools, {len(all_java_versions)} Java versions, {len(all_plugin_versions)} plugin versions[/green]")
+        
+        return all_build_tools, all_java_versions, all_plugin_versions
+
+    def analyze_repositories_individual(self, repositories: List[Repository]) -> Tuple[List[BuildTool], List[JavaVersion], List[PluginVersion]]:
+        """
+        Analyze repositories using individual analysis (fallback method)
+        
+        Args:
+            repositories: List of repositories to analyze
+            
+        Returns:
+            Tuple of (build_tools, java_versions, plugin_versions) found in all repositories
+        """
+        console.print(f"[bold blue]Analyzing {len(repositories)} repositories individually...[/bold blue]")
+        
+        all_build_tools = []
+        all_java_versions = []
+        all_plugin_versions = []
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(
+                f"Analyzing {len(repositories)} repositories...", 
+                total=len(repositories)
+            )
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                future_to_repo = {
+                    executor.submit(self.analyze_repository_parallel, repo, task): repo 
+                    for repo in repositories
+                }
+                
+                for future in as_completed(future_to_repo):
+                    try:
+                        build_tools, java_versions, plugin_versions = future.result()
+                        all_build_tools.extend(build_tools)
+                        all_java_versions.extend(java_versions)
+                        all_plugin_versions.extend(plugin_versions)
+                    except Exception as e:
+                        repo = future_to_repo[future]
+                        console.print(f"[red]Error analyzing {repo.name}: {str(e)}[/red]")
+        
+        return all_build_tools, all_java_versions, all_plugin_versions
 
     def _get_file_content(self, repo: Repository, file_path: str) -> Optional[str]:
         """
@@ -1699,7 +1966,10 @@ class SimpleBuildAnalyzer:
 @click.option('--clear-cache', is_flag=True, help='Clear all cache files before running analysis')
 @click.option('--config', '-c', help='Path to configuration file (default: config.yaml)')
 @click.option('--create-config', is_flag=True, help='Create a default configuration file and exit')
-def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenkins_only: bool, optimized: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool):
+@click.option('--predict-api', is_flag=True, help='Predict API usage before starting analysis')
+@click.option('--bulk-analysis', is_flag=True, help='Use bulk file fetching for better API efficiency')
+@click.option('--show-config', is_flag=True, help='Display the configuration as interpreted by the script and exit')
+def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenkins_only: bool, optimized: bool, rate_limit_delay: float, max_workers: int, verbose: bool, use_cache: bool, cache_dir: str, clear_cache: bool, config: str, create_config: bool, predict_api: bool, bulk_analysis: bool, show_config: bool):
     """
     Analyze GitHub organization or specific repository for build tool versions, Java versions, and plugin versions
     
@@ -1768,6 +2038,17 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
         use_cache = use_cache or config_obj.caching.enabled
         cache_dir = cache_dir if cache_dir != '.cache' else config_obj.caching.directory
         repo = repo or config_obj.analysis.single_repository
+        
+        # API optimization settings from config
+        predict_api = predict_api or config_obj.api_optimization.predict_api_calls
+        bulk_analysis = bulk_analysis or config_obj.api_optimization.bulk_analysis
+    
+    # Show configuration if requested
+    if show_config:
+        display_configuration(org_name, token, output, csv, html, jenkins_only, optimized, 
+                            rate_limit_delay, max_workers, verbose, use_cache, cache_dir, 
+                            repo, predict_api, bulk_analysis, config_obj)
+        return
     
     if not token:
         console.print("[red]Error: GitHub token is required. Set GITHUB_TOKEN environment variable, use --token option, or configure in config file.[/red]")
@@ -1791,6 +2072,26 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
         
         # Initialize analyzer with configuration
         analyzer = SimpleBuildAnalyzer(token, org_name, rate_limit_delay, max_workers, verbose, use_cache, cache_dir, exclusions)
+        
+        # API prediction if requested
+        if predict_api:
+            prediction = analyzer.predict_api_usage(jenkins_only=jenkins_only)
+            if prediction:
+                console.print(f"\n[bold blue]API Usage Prediction:[/bold blue]")
+                console.print(f"[blue]Estimated API calls: {prediction.total_api_calls_estimated}[/blue]")
+                console.print(f"[blue]Rate limit impact: {prediction.rate_limit_impact}[/blue]")
+                
+                # Check against config threshold
+                threshold = config_obj.api_optimization.prediction_warning_threshold if config_obj else 3000
+                if prediction.total_api_calls_estimated > threshold:
+                    console.print(f"\n[bold yellow]Warning: Estimated API calls ({prediction.total_api_calls_estimated}) exceed threshold ({threshold})[/bold yellow]")
+                
+                if prediction.rate_limit_impact in ["risky", "exceeded"]:
+                    console.print("\n[bold red]Warning: Analysis may exceed rate limits![/bold red]")
+                    response = input("Continue anyway? (y/N): ")
+                    if response.lower() != 'y':
+                        console.print("[yellow]Analysis cancelled by user[/yellow]")
+                        return
         
         # Show cache status
         if use_cache:
@@ -1866,42 +2167,15 @@ def main(org: str, repo: str, token: str, output: str, csv: str, html: str, jenk
             console.print("[yellow]No repositories found to analyze[/yellow]")
             return
         
-        # Analyze repositories in parallel for efficiency
-        all_build_tools = []
-        all_java_versions = []
-        all_plugin_versions = []
-        
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task(
-                f"Analyzing {len(repos)} repositories with {max_workers} workers...", 
-                total=len(repos)
-            )
-            
-            # Use ThreadPoolExecutor for parallel processing
-            # This dramatically speeds up analysis of large organizations
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all repository analysis tasks
-                future_to_repo = {}
-                for repo in repos:
-                    future = executor.submit(analyzer.analyze_repository_parallel, repo, task)
-                    future_to_repo[future] = repo.name
-                
-                # Process completed tasks as they finish
-                for future in as_completed(future_to_repo):
-                    repo_name = future_to_repo[future]
-                    try:
-                        build_tools, java_versions, plugin_versions = future.result()
-                        all_build_tools.extend(build_tools)
-                        all_java_versions.extend(java_versions)
-                        all_plugin_versions.extend(plugin_versions)
-                    except Exception as e:
-                        console.print(f"[red]Error analyzing {repo_name}: {str(e)}[/red]")
+        # Analyze repositories using selected method
+        bulk_file_limit = config_obj.api_optimization.bulk_file_limit if config_obj else 10
+        if bulk_analysis and len(repos) > 10:  # Use bulk analysis for larger repositories
+            console.print(f"[bold green]Using bulk analysis mode for better API efficiency (file limit: {bulk_file_limit})[/bold green]")
+            all_build_tools, all_java_versions, all_plugin_versions = analyzer.analyze_repositories_bulk(repos)
+        else:
+            # Use individual analysis (original method)
+            console.print(f"[bold blue]Using individual analysis mode for {len(repos)} repositories[/bold blue]")
+            all_build_tools, all_java_versions, all_plugin_versions = analyzer.analyze_repositories_individual(repos)
         
         # Generate and display the analysis report
         analyzer.generate_report(all_build_tools, all_java_versions, all_plugin_versions, jenkins_only)
