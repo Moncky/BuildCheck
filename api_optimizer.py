@@ -16,6 +16,7 @@ import os
 import time
 import logging
 import math
+import pickle
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -48,10 +49,12 @@ class BulkFileRequest:
 class APIOptimizer:
     """Advanced API optimization and prediction for BuildCheck"""
     
-    def __init__(self, github: Github, org_name: str, verbose: bool = False):
+    def __init__(self, github: Github, org_name: str, verbose: bool = False, cache_dir: str = ".cache", cache_duration: int = 3600):
         self.github = github
         self.org_name = org_name
         self.verbose = verbose
+        self.cache_dir = cache_dir
+        self.cache_duration = cache_duration
         self.api_calls_made = 0
         self.cache_hits = 0
         
@@ -80,16 +83,35 @@ class APIOptimizer:
             APIPrediction object with detailed estimates
         """
         
-        # Base API calls for repository discovery
-        discovery_calls = math.ceil(estimated_repos / 100)  # 100 repos per page
+        # Check cache status if caching is enabled
+        cache_status = None
+        cache_available = False
+        cached_repo_count = None
         
-        if jenkins_only:
-            # Jenkins-only mode uses search API (more efficient)
-            discovery_calls = 1  # Single search call
-            repos_to_analyze = estimated_repos * 0.3  # Assume 30% have Jenkinsfiles
+        if use_cache:
+            cache_status = self.get_cache_status(jenkins_only)
+            cache_available = cache_status['exists']
+            cached_repo_count = cache_status['repository_count']
+        
+        # Base API calls for repository discovery
+        if cache_available:
+            # Cache is available - no discovery calls needed
+            discovery_calls = 0
+            repos_to_analyze = cached_repo_count or estimated_repos * (0.3 if jenkins_only else 0.8)
+            cache_benefit = "Cache available - no repository discovery needed"
         else:
-            # Full analysis mode
-            repos_to_analyze = estimated_repos * 0.8  # Assume 80% are analyzable (not archived/empty)
+            # No cache available - need to discover repositories
+            discovery_calls = math.ceil(estimated_repos / 100)  # 100 repos per page
+            
+            if jenkins_only:
+                # Jenkins-only mode uses search API (more efficient)
+                discovery_calls = 1  # Single search call
+                repos_to_analyze = estimated_repos * 0.3  # Assume 30% have Jenkinsfiles
+            else:
+                # Full analysis mode
+                repos_to_analyze = estimated_repos * 0.8  # Assume 80% are analyzable (not archived/empty)
+            
+            cache_benefit = "No cache available - repository discovery required"
         
         # API calls per repository analysis
         # Each repo needs: 1 (contents) + up to 8 file checks + rate limit checks
@@ -115,20 +137,34 @@ class APIOptimizer:
         else:
             impact = "exceeded"
         
-        # Recommendations
+        # Enhanced recommendations based on cache status
         recommendations = []
+        
+        if cache_available:
+            recommendations.append(f"✅ {cache_benefit}")
+            if cached_repo_count:
+                recommendations.append(f"📦 Cached {cached_repo_count} repositories ready for analysis")
+        else:
+            recommendations.append(f"⚠️  {cache_benefit}")
+            if use_cache:
+                recommendations.append("💡 Run analysis once to populate cache for future runs")
+            else:
+                recommendations.append("💡 Enable caching with --use-cache to reduce future API calls")
+        
         if impact == "exceeded":
-            recommendations.append("Use --jenkins-only mode to reduce API calls")
-            recommendations.append("Enable caching with --use-cache")
-            recommendations.append("Consider running in multiple sessions")
+            recommendations.append("🚨 Use --jenkins-only mode to reduce API calls")
+            if not cache_available:
+                recommendations.append("🚨 Enable caching with --use-cache")
+            recommendations.append("🚨 Consider running in multiple sessions")
         elif impact == "risky":
-            recommendations.append("Enable caching to reduce API calls")
-            recommendations.append("Consider using --jenkins-only mode")
+            recommendations.append("⚠️  Enable caching to reduce API calls")
+            recommendations.append("⚠️  Consider using --jenkins-only mode")
         elif impact == "moderate":
-            recommendations.append("Enable caching for better performance")
+            if not cache_available:
+                recommendations.append("💡 Enable caching for better performance")
         
         if time_estimate > 60:
-            recommendations.append(f"Estimated time: {time_estimate:.1f} minutes - consider running overnight")
+            recommendations.append(f"⏰ Estimated time: {time_estimate:.1f} minutes - consider running overnight")
         
         return APIPrediction(
             total_repositories=estimated_repos,
@@ -235,6 +271,88 @@ class APIOptimizer:
         
         return results
     
+    def _get_cache_path(self, cache_type: str) -> str:
+        """
+        Get the cache file path for a specific cache type
+        
+        Args:
+            cache_type: Type of cache (e.g., 'all_repos', 'jenkins_repos')
+            
+        Returns:
+            Full path to the cache file
+        """
+        if not os.path.exists(self.cache_dir):
+            return None
+        
+        safe_org_name = self.org_name.replace('/', '_').replace('\\', '_')
+        return os.path.join(self.cache_dir, f"{safe_org_name}_{cache_type}.pkl")
+    
+    def _cache_exists_and_fresh(self, cache_type: str) -> bool:
+        """
+        Check if a cache file exists and is still fresh
+        
+        Args:
+            cache_type: Type of cache to check
+            
+        Returns:
+            True if cache exists and is fresh, False otherwise
+        """
+        cache_path = self._get_cache_path(cache_type)
+        if not cache_path or not os.path.exists(cache_path):
+            return False
+        
+        try:
+            # Check if cache is still fresh
+            cache_age = time.time() - os.path.getmtime(cache_path)
+            return cache_age <= self.cache_duration
+        except Exception:
+            return False
+    
+    def _get_cached_repository_count(self, cache_type: str) -> Optional[int]:
+        """
+        Get the number of repositories in a cache file
+        
+        Args:
+            cache_type: Type of cache to check
+            
+        Returns:
+            Number of repositories in cache, or None if cache doesn't exist
+        """
+        cache_path = self._get_cache_path(cache_type)
+        if not cache_path or not os.path.exists(cache_path):
+            return None
+        
+        try:
+            with open(cache_path, 'rb') as f:
+                cached_data = pickle.load(f)
+                return len(cached_data) if isinstance(cached_data, list) else None
+        except Exception:
+            return None
+    
+    def get_cache_status(self, jenkins_only: bool = False) -> Dict[str, any]:
+        """
+        Get the current cache status for the organization
+        
+        Args:
+            jenkins_only: Whether to check Jenkins-only cache
+            
+        Returns:
+            Dictionary with cache status information
+        """
+        cache_type = 'jenkins_repos' if jenkins_only else 'all_repos'
+        
+        exists = self._cache_exists_and_fresh(cache_type)
+        repo_count = self._get_cached_repository_count(cache_type) if exists else None
+        
+        return {
+            'cache_type': cache_type,
+            'exists': exists,
+            'repository_count': repo_count,
+            'cache_path': self._get_cache_path(cache_type),
+            'cache_dir': self.cache_dir,
+            'cache_duration': self.cache_duration
+        }
+    
     def optimize_file_check_order(self, file_patterns: List[str]) -> List[str]:
         """
         Optimize the order of file checks based on likelihood of success
@@ -328,7 +446,7 @@ class APIOptimizer:
         
         return plan
     
-    def display_prediction(self, prediction: APIPrediction):
+    def display_prediction(self, prediction: APIPrediction, cache_status: Dict[str, any] = None):
         """Display API prediction in a nice format"""
         table = Table(title="API Call Prediction")
         table.add_column("Metric", style="cyan")
@@ -344,6 +462,21 @@ class APIOptimizer:
         table.add_row("Rate Limit Impact", prediction.rate_limit_impact, self._get_impact_color(prediction.rate_limit_impact))
         
         console.print(table)
+        
+        # Show cache status if available
+        if cache_status:
+            cache_table = Table(title="Cache Status")
+            cache_table.add_column("Cache Info", style="cyan")
+            cache_table.add_column("Status", style="magenta")
+            
+            cache_table.add_row("Cache Type", cache_status.get('cache_type', 'N/A'))
+            cache_table.add_row("Cache Available", "✅ Yes" if cache_status.get('exists') else "❌ No")
+            if cache_status.get('repository_count'):
+                cache_table.add_row("Cached Repositories", str(cache_status['repository_count']))
+            cache_table.add_row("Cache Directory", cache_status.get('cache_dir', 'N/A'))
+            cache_table.add_row("Cache Duration", f"{cache_status.get('cache_duration', 0) // 3600} hours")
+            
+            console.print(cache_table)
         
         if prediction.recommendations:
             console.print("\n[bold yellow]Recommendations:[/bold yellow]")

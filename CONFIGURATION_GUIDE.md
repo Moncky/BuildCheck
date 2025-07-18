@@ -58,9 +58,24 @@ api_optimization:
 
 ## API Optimization Features Explained
 
+### Cache-Aware API Prediction (NEW!)
+
+The API optimization now intelligently considers cache availability when making predictions:
+
+**How it works**:
+- **With cache**: Uses actual cached repository count, shows 0 discovery calls
+- **Without cache**: Uses estimated repository count, includes discovery calls
+- **Smart recommendations**: Provides different advice based on cache status
+
+**Benefits**:
+- **Accurate predictions**: No more over-estimating when cache is available
+- **Better planning**: Know exactly how many API calls will be made
+- **Cache encouragement**: Shows the benefits of enabling caching
+- **Rate limit safety**: More accurate rate limit impact assessment
+
 ### 1. API Call Prediction
 
-**Purpose**: Predict how many API calls your analysis will make before starting.
+**Purpose**: Predict how many API calls your analysis will make before starting, taking into account cache availability.
 
 **Settings**:
 - `predict_api_calls`: Enable/disable prediction
@@ -73,13 +88,48 @@ api_optimization:
   prediction_warning_threshold: 3000  # Warn if > 3000 calls predicted
 ```
 
-**Output**:
+**Output with Cache Available**:
 ```
-API Usage Prediction:
-Estimated API calls: 2500
-Rate limit impact: moderate
+API Call Prediction:
+Total Repositories: 1000
+Repositories to Analyze: 50
+Discovery API Calls: 0
+Total Estimated API Calls: 500
+Rate Limit Impact: safe
 
-Warning: Estimated API calls (2500) exceed threshold (3000)
+Cache Status:
+Cache Available: ✅ Yes
+Cached Repositories: 50
+```
+
+**Output without Cache**:
+```
+API Call Prediction:
+Total Repositories: 1000
+Repositories to Analyze: 300
+Discovery API Calls: 1
+Total Estimated API Calls: 3001
+Rate Limit Impact: exceeded
+
+Cache Status:
+Cache Available: ❌ No
+```
+
+**Key Benefits**:
+- **Cache-aware predictions**: Shows different estimates based on cache availability
+- **Accurate repository counts**: Uses actual cached repository count when available
+- **Discovery call reduction**: Shows 0 discovery calls when cache is available
+- **Smart recommendations**: Provides cache-specific optimization advice
+
+**Practical Example**:
+```bash
+# First run (no cache) - shows higher estimates
+python build_check.py --org my-org --predict-api --use-cache
+# Output: 3001 API calls estimated, rate limit impact: exceeded
+
+# After running analysis (cache populated)
+python build_check.py --org my-org --predict-api --use-cache  
+# Output: 500 API calls estimated, rate limit impact: safe
 ```
 
 ### 2. Bulk Analysis

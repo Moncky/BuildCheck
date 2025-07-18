@@ -225,7 +225,7 @@ class SimpleBuildAnalyzer:
         self.exclusions = exclusions or {'repositories': [], 'patterns': []}
         
         # API optimizer for prediction and optimization
-        self.api_optimizer = APIOptimizer(self.github, org_name, verbose) if APIOptimizer else None
+        self.api_optimizer = APIOptimizer(self.github, org_name, verbose, cache_dir, self.cache_duration) if APIOptimizer else None
         
         # Define build tool detection patterns
         # These are ordered by reliability - most reliable sources first
@@ -429,6 +429,11 @@ class SimpleBuildAnalyzer:
         # Get organization size estimate
         estimated_repos = self.api_optimizer.get_organization_size_estimate()
         
+        # Get cache status for display
+        cache_status = None
+        if self.use_cache:
+            cache_status = self.api_optimizer.get_cache_status(jenkins_only)
+        
         # Create prediction
         prediction = self.api_optimizer.predict_api_calls(
             estimated_repos=estimated_repos,
@@ -437,8 +442,8 @@ class SimpleBuildAnalyzer:
             max_workers=self.max_workers
         )
         
-        # Display prediction
-        self.api_optimizer.display_prediction(prediction)
+        # Display prediction with cache status
+        self.api_optimizer.display_prediction(prediction, cache_status)
         
         return prediction
 
