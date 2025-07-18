@@ -53,3 +53,7 @@ logs/
 .env
 .env.local
 .env.*.local 
+
+# Reports
+.cache
+report.*

@@ -245,7 +245,13 @@ class SimpleBuildAnalyzer:
                     r'<maven\.version>([^<]+)</maven\.version>',
                     # Jenkins tool configuration - Jenkins often specifies exact versions
                     r'tool\s*[\'"]([^\'"]+)[\'"]\s*{.*?maven\s*[\'"]([^\'"]+)[\'"]',
-                    r'maven\s*[\'"]([^\'"]+)[\'"]'
+                    r'maven\s*[\'"]([^\'"]+)[\'"]',
+                    # Additional patterns for maven-wrapper.properties
+                    r'maven\.version\s*=\s*([^\s]+)',
+                    r'wrapperUrl=.*?apache-maven-([\d.]+)-bin\.zip',
+                    # Fallback pattern for simple version numbers (when bulk analysis extracts just the version)
+                    # Only match if it looks like a Maven version (3.x.x format)
+                    r'\b(3\.[\d.]+)\b'
                 ]
             },
             'gradle': {
@@ -264,7 +270,13 @@ class SimpleBuildAnalyzer:
                     r'gradleVersion\s*=\s*[\'"]([^\'"]+)[\'"]',
                     # Jenkins tool configuration - Jenkins often specifies exact versions
                     r'tool\s*[\'"]([^\'"]+)[\'"]\s*{.*?gradle\s*[\'"]([^\'"]+)[\'"]',
-                    r'gradle\s*[\'"]([^\'"]+)[\'"]'
+                    r'gradle\s*[\'"]([^\'"]+)[\'"]',
+                    # Additional patterns for gradle.properties
+                    r'gradle\.version\s*=\s*([^\s]+)',
+                    r'org\.gradle\.version\s*=\s*([^\s]+)',
+                    # Fallback pattern for simple version numbers (when bulk analysis extracts just the version)
+                    # Only match if it looks like a Gradle version (x.x.x format)
+                    r'\b([\d.]+)\b'
                 ]
             }
         }
@@ -940,8 +952,12 @@ class SimpleBuildAnalyzer:
                     for file_name in tool_config['files']:
                         if file_name in repo_files:
                             content = repo_files[file_name]
+                            if self.verbose:
+                                logging.debug(f"Checking {tool_name} in {file_name} for {repo_name}")
                             version = self._extract_version(content, tool_config['version_patterns'])
                             if version:
+                                if self.verbose:
+                                    logging.info(f"Found {tool_name} version {version} in {repo_name} ({file_name})")
                                 all_build_tools.append(BuildTool(
                                     name=tool_name,
                                     version=version,
@@ -951,6 +967,10 @@ class SimpleBuildAnalyzer:
                                     detection_method=f"Found in {file_name} (bulk analysis)"
                                 ))
                                 break  # Found version for this tool
+                            elif self.verbose:
+                                logging.debug(f"No {tool_name} version found in {file_name} for {repo_name}")
+                        elif self.verbose:
+                            logging.debug(f"File {file_name} not found in {repo_name}")
                 
                 # Analyze Java versions
                 for build_tool, java_config in self.java_version_patterns.items():
@@ -1168,11 +1188,52 @@ class SimpleBuildAnalyzer:
                 if len(match.groups()) > 1:
                     # Return the last non-None group (usually the version)
                     for group in reversed(match.groups()):
-                        if group:
+                        if group and self._is_valid_version(group.strip()):
                             return group.strip()
                 else:
-                    return match.group(1).strip()
+                    extracted = match.group(1).strip()
+                    if self._is_valid_version(extracted):
+                        return extracted
         return None
+
+    def _is_valid_version(self, version_str: str) -> bool:
+        """
+        Validate if a string looks like a valid version number
+        
+        Args:
+            version_str: String to validate
+            
+        Returns:
+            True if it looks like a valid version, False otherwise
+        """
+        if not version_str:
+            return False
+        
+        # Remove common prefixes/suffixes
+        cleaned = version_str.strip()
+        
+        # Skip if it's too short or too long
+        if len(cleaned) < 2 or len(cleaned) > 20:
+            return False
+        
+        # Skip if it contains obvious non-version text
+        invalid_patterns = [
+            r'\b(def|import|apply|plugin|group|version|repos|subprojects|allprojects)\b',
+            r'[{}]',  # Curly braces
+            r'^\s*$',  # Empty or whitespace only
+            r'^[^0-9]',  # Doesn't start with a number
+            r'[<>]',  # XML-like tags
+        ]
+        
+        for pattern in invalid_patterns:
+            if re.search(pattern, cleaned, re.IGNORECASE):
+                return False
+        
+        # Check if it contains at least one digit and looks like a version
+        if re.search(r'\d', cleaned) and re.match(r'^[\d.+\-a-zA-Z_]+$', cleaned):
+            return True
+        
+        return False
 
     def _extract_java_version(self, content: str, patterns: List[str], build_tool: str, file_path: str, repo_name: str, branch: str) -> Optional[JavaVersion]:
         """
@@ -1197,6 +1258,10 @@ class SimpleBuildAnalyzer:
             match = re.search(pattern, content, re.IGNORECASE | re.MULTILINE | re.DOTALL)
             if match:
                 extracted = match.group(1).strip()
+                
+                # Skip placeholder values that don't represent actual versions
+                if self._is_placeholder_version(extracted):
+                    continue
                 
                 # Determine what type of version this is
                 if 'source' in pattern.lower():
@@ -1229,6 +1294,36 @@ class SimpleBuildAnalyzer:
             )
         
         return None
+
+    def _is_placeholder_version(self, version_str: str) -> bool:
+        """
+        Check if a version string is a placeholder rather than an actual version
+        
+        Args:
+            version_str: Version string to check
+            
+        Returns:
+            True if it's a placeholder, False if it's an actual version
+        """
+        if not version_str:
+            return True
+        
+        # Common placeholder patterns
+        placeholder_patterns = [
+            r'^\$\{.*\}$',  # ${java.version}, ${version.java}, etc.
+            r'^\$[a-zA-Z_][a-zA-Z0-9_.]*$',  # $java.version, $version.java, etc.
+            r'^[a-zA-Z_][a-zA-Z0-9_.]*$',  # javaVersion, versionJava, etc. (without numbers)
+        ]
+        
+        for pattern in placeholder_patterns:
+            if re.match(pattern, version_str):
+                return True
+        
+        # If it doesn't contain any digits, it's likely a placeholder
+        if not re.search(r'\d', version_str):
+            return True
+        
+        return False
 
     def _extract_plugin_version(self, content: str, patterns: List[str], build_tool: str, file_path: str, repo_name: str, branch: str) -> Optional[PluginVersion]:
         """
