@@ -286,23 +286,29 @@ class SimpleBuildAnalyzer:
             'maven': {
                 'files': ['pom.xml'],
                 'patterns': [
-                    # Java version properties (most common)
-                    r'<java\.version>([^<]+)</java\.version>',
-                    r'<maven\.compiler\.source>([^<]+)</maven\.compiler\.source>',
-                    r'<maven\.compiler\.target>([^<]+)</maven\.compiler\.target>',
-                    # Maven compiler plugin configuration
+                    # Java version properties (most common and reliable)
+                    r'<(?:\\w+:)?java\\.version>([^<]+)</(?:\\w+:)?java\\.version>',
+                    r'<properties>.*?<(?:\\w+:)?java\\.version>([^<]+)</(?:\\w+:)?java\\.version>',
+                    # Maven compiler properties (alternative approach)
+                    r'<(?:\\w+:)?maven\\.compiler\\.source>([^<]+)</(?:\\w+:)?maven\\.compiler\\.source>',
+                    r'<(?:\\w+:)?maven\\.compiler\\.target>([^<]+)</(?:\\w+:)?maven\\.compiler\\.target>',
+                    r'<properties>.*?<(?:\\w+:)?maven\\.compiler\\.source>([^<]+)</(?:\\w+:)?maven\\.compiler\\.source>',
+                    r'<properties>.*?<(?:\\w+:)?maven\\.compiler\\.target>([^<]+)</(?:\\w+:)?maven\\.compiler\\.target>',
+                    # Maven compiler plugin configuration (more specific patterns)
+                    r'<artifactId>maven-compiler-plugin</artifactId>.*?<source>([^<]+)</source>',
+                    r'<artifactId>maven-compiler-plugin</artifactId>.*?<target>([^<]+)</target>',
+                    # Additional patterns for different plugin configurations
+                    r'<plugin>.*?<groupId>org\\.apache\\.maven\\.plugins</groupId>.*?<artifactId>maven-compiler-plugin</artifactId>.*?<configuration>.*?<source>([^<]+)</source>',
+                    r'<plugin>.*?<groupId>org\\.apache\\.maven\\.plugins</groupId>.*?<artifactId>maven-compiler-plugin</artifactId>.*?<configuration>.*?<target>([^<]+)</target>',
+                    # Simpler plugin patterns that should catch most cases
                     r'<maven-compiler-plugin>.*?<source>([^<]+)</source>',
-                    r'<maven-compiler-plugin>.*?<target>([^<]+)</target>',
-                    # Properties section
-                    r'<properties>.*?<java\.version>([^<]+)</java\.version>',
-                    r'<properties>.*?<maven\.compiler\.source>([^<]+)</maven\.compiler\.source>',
-                    r'<properties>.*?<maven\.compiler\.target>([^<]+)</maven\.compiler\.target>'
+                    r'<maven-compiler-plugin>.*?<target>([^<]+)</target>'
                 ]
             },
             'gradle': {
                 'files': ['build.gradle', 'build.gradle.kts', 'gradle.properties'],
                 'patterns': [
-                    # Source and target compatibility
+                    # Source and target compatibility (most common)
                     r'sourceCompatibility\s*=\s*[\'"]([^\'"]+)[\'"]',
                     r'targetCompatibility\s*=\s*[\'"]([^\'"]+)[\'"]',
                     r'sourceCompatibility\s*=\s*JavaVersion\.VERSION_([^\s]+)',
@@ -312,7 +318,10 @@ class SimpleBuildAnalyzer:
                     r'java\s*{[^}]*targetCompatibility\s*=\s*JavaVersion\.VERSION_([^\s]+)',
                     # Gradle properties
                     r'java\.version\s*=\s*([^\s]+)',
-                    r'org\.gradle\.java\.home\s*=\s*([^\s]+)'
+                    r'org\.gradle\.java\.home\s*=\s*([^\s]+)',
+                    # Additional Gradle patterns
+                    r'compileJava\s*{[^}]*sourceCompatibility\s*=\s*[\'"]([^\'"]+)[\'"]',
+                    r'compileJava\s*{[^}]*targetCompatibility\s*=\s*[\'"]([^\'"]+)[\'"]'
                 ]
             }
         }
@@ -1239,6 +1248,11 @@ class SimpleBuildAnalyzer:
         """
         Extract Java version information from content using patterns
         
+        This method prioritizes the most reliable sources of Java version information:
+        1. Explicit java.version properties (most reliable)
+        2. Source/target compatibility settings
+        3. Maven compiler plugin configurations
+        
         Args:
             content: File content to search
             patterns: List of regex patterns to try
@@ -1254,34 +1268,56 @@ class SimpleBuildAnalyzer:
         target_compat = None
         version = None
         
+        # Track what we found for better detection method description
+        found_sources = []
+        
         for pattern in patterns:
+            if self.verbose:
+                logging.debug(f"Trying pattern: {pattern}")
             match = re.search(pattern, content, re.IGNORECASE | re.MULTILINE | re.DOTALL)
             if match:
                 extracted = match.group(1).strip()
-                
+                if self.verbose:
+                    logging.debug(f"Pattern matched. Extracted value: '{extracted}' from file: {file_path}")
                 # Skip placeholder values that don't represent actual versions
                 if self._is_placeholder_version(extracted):
+                    if self.verbose:
+                        logging.debug(f"Skipped placeholder value: '{extracted}'")
                     continue
                 
-                # Determine what type of version this is
-                if 'source' in pattern.lower():
-                    source_compat = extracted
+                # Determine what type of version this is based on pattern content
+                if 'source' in pattern.lower() and 'target' not in pattern.lower():
+                    if not source_compat:  # Only set if not already found
+                        source_compat = extracted
+                        found_sources.append('source compatibility')
                 elif 'target' in pattern.lower():
-                    target_compat = extracted
+                    if not target_compat:  # Only set if not already found
+                        target_compat = extracted
+                        found_sources.append('target compatibility')
                 elif 'java.version' in pattern.lower():
-                    version = extracted
+                    if not version:  # Only set if not already found
+                        version = extracted
+                        found_sources.append('java.version property')
                 else:
                     # Default to version if we can't determine type
-                    version = extracted
+                    if not version:  # Only set if not already found
+                        version = extracted
+                        found_sources.append('compiler configuration')
         
         # If we found any Java version information, create the object
         if version or source_compat or target_compat:
             # Determine the primary version to display
+            # Priority: java.version property > source compatibility > target compatibility
             primary_version = version or source_compat or target_compat
             
             # Clean up version strings (remove 'VERSION_' prefix, etc.)
             if primary_version and primary_version.startswith('VERSION_'):
                 primary_version = primary_version.replace('VERSION_', '')
+            
+            # Create a more descriptive detection method
+            detection_method = f"Found in {build_tool} configuration"
+            if found_sources:
+                detection_method += f" ({', '.join(found_sources)})"
             
             return JavaVersion(
                 version=primary_version,
@@ -1290,7 +1326,7 @@ class SimpleBuildAnalyzer:
                 file_path=file_path,
                 repository=repo_name,
                 branch=branch,
-                detection_method=f"Found in {build_tool} configuration"
+                detection_method=detection_method
             )
         
         return None
@@ -1311,8 +1347,10 @@ class SimpleBuildAnalyzer:
         # Common placeholder patterns
         placeholder_patterns = [
             r'^\$\{.*\}$',  # ${java.version}, ${version.java}, etc.
-            r'^\$[a-zA-Z_][a-zA-Z0-9_.]*$',  # $java.version, $version.java, etc.
+            r'^\$[a-zA-Z_][a-zA-Z0-9_.]*$',  # $java.version, $version.java, etc. (without numbers)
             r'^[a-zA-Z_][a-zA-Z0-9_.]*$',  # javaVersion, versionJava, etc. (without numbers)
+            r'^\$\{[a-zA-Z_][a-zA-Z0-9_.]*\}$',  # ${java.version}, ${version.java}, etc.
+            r'^\$[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z0-9_.]*$',  # $java.runtime.version, etc.
         ]
         
         for pattern in placeholder_patterns:
@@ -1321,6 +1359,10 @@ class SimpleBuildAnalyzer:
         
         # If it doesn't contain any digits, it's likely a placeholder
         if not re.search(r'\d', version_str):
+            return True
+        
+        # Additional checks for common placeholder-like strings
+        if version_str.lower() in ['null', 'undefined', 'none', '']:
             return True
         
         return False
